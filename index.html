@@ -5469,7 +5469,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                     const recovery = normalizedRole === "admin"
                         ? "Login Administrator memakai email Auth robertus.hami@sunter.ipeka.sch.id. Masukkan email tersebut pada kolom username. Pastikan akun sudah ada di Supabase Authentication → Users, email sudah confirmed, App Metadata berisi role=admin, username=robertus.hami@sunter.ipeka.sch.id, active=true, dan password Auth sudah diatur sesuai password yang Anda tetapkan. Password tidak disimpan pada konstanta ADMIN di index.html; file frontend hanya mengirim password yang diketik ke Supabase Auth. Jika akun belum ada, buat melalui Authentication → Users → Add User; jika sudah ada, gunakan Reset Password di Supabase Dashboard."
                         : normalizedRole === "student"
-                            ? "Akun Student untuk ISN ini belum ada di Supabase Auth. Administrator harus login dari browser yang memiliki Master Student, lalu jalankan sinkronisasi akun. Password standar baru siswa adalah Ipeka#2026 kecuali sudah diubah Administrator/siswa. Pastikan Edge Function ict-sync-accounts sudah aktif."
+                            ? "ISN tidak ditemukan sebagai akun login di Supabase Auth. Pastikan Administrator sudah mendaftarkan ISN dan nama siswa pada menu Student Registration, menetapkan password pada Student Account Registration, lalu sinkronisasi akun ke Supabase berhasil. Perangkat siswa tidak perlu menyimpan Master Student secara lokal. Pastikan Edge Function ict-sync-accounts sudah di-deploy dan secret Supabase lengkap."
                             : "Supabase tidak menemukan kombinasi email/password Teacher. Pastikan email yang diketik sama persis dengan Email Sekolah pada Data Master → Teachers (tanpa spasi), akun sudah disinkronkan Administrator, dan password Auth sama dengan password terbaru yang ditetapkan Administrator. Jika ragu, Administrator buka Data Master → Teachers → Set / Reset Password untuk membuat password baru (minimal 8 karakter), lalu tunggu notifikasi sinkronisasi berhasil. Pastikan Edge Function ict-sync-accounts sudah di-deploy.";
                     throw new Error(`Invalid login credentials. ${roleLabel}: ${recovery}`);
                 }
@@ -6734,17 +6734,8 @@ html, body { max-width:100%; overflow-x:hidden; }
             // dari satu sumber data state.users yang dikelola Administrator.
             // Administrator menggunakan akun ADMIN; Teacher dan Student menggunakan
             // akun yang dibuat pada Data Master.
-            if (selectedLoginRole === "student") {
-                ensureStudentLoginAccounts();
-                // Login Student selalu menggunakan ISN, bukan nama atau email.
-                const studentAccount = findStudentAccountByISN(username);
-                if (!studentAccount) {
-                    throw new Error("ISN tidak ditemukan pada Master Student. Hubungi Administrator untuk memeriksa data siswa.");
-                }
-                if (studentAccount.active === false) {
-                    throw new Error("Akun Student belum diaktifkan oleh Administrator.");
-                }
-            }
+            // Student diverifikasi oleh Supabase Auth terlebih dahulu.
+            // Perangkat siswa tidak menyimpan localStorage Master Student Administrator.
             const normalizedRole = normalizeLoginRole(selectedLoginRole);
             const normalizedLoginName = username.trim().toLowerCase();
             // Student: username selalu ISN; Teacher: email sekolah; Admin: username admin.
@@ -6783,9 +6774,21 @@ html, body { max-width:100%; overflow-x:hidden; }
             if (selectedLoginRole === "admin" && !found.username) found.username = username;
             if (found) found.role = String(found.role || selectedLoginRole || "").toLowerCase();
             if (found?.role === "student") {
-                // Gunakan record akun yang sama dengan Master Data dan pastikan
-                // username selalu ISN, bukan nama siswa atau email.
+                // Profil cloud Master Student melengkapi metadata Auth.
+                // Jika perangkat siswa tidak memiliki Master lokal, gunakan metadata
+                // yang dibuat Edge Function saat Administrator mendaftarkan siswa.
                 found = syncStudentAccountFromMaster(found);
+                const authenticatedIsn = String(found.isn || found.username || "").trim().toLowerCase();
+                if (authenticatedIsn !== normalizedLoginName) {
+                    await ictSupabaseClient.auth.signOut();
+                    backendAccessToken = "";
+                    throw new Error("ISN akun Supabase tidak cocok dengan ISN yang dimasukkan. Hubungi Administrator untuk memeriksa Student Registration.");
+                }
+                if (found.active === false) {
+                    await ictSupabaseClient.auth.signOut();
+                    backendAccessToken = "";
+                    throw new Error("Akun Student dinonaktifkan oleh Administrator. Hubungi Administrator.");
+                }
             }
             if (found && found.role === "teacher" && found.active === false) {
                 toast("Akun guru belum diaktifkan oleh Administrator.");
@@ -8269,11 +8272,39 @@ html, body { max-width:100%; overflow-x:hidden; }
             $("#registrationSaveButton").textContent="Save Changes";
             $("#registrationCancelEdit").hidden=false;
         }
-        function showStudentImportResult(result) {
+        async function showStudentImportResult(result) {
             const msg=`Added: ${result.added} · Updated: ${result.updated} · Skipped: ${result.skipped}`;
-            toast(msg+(result.errors.length?` — ${result.errors[0]}`:""));
-            if(result.added||result.updated)renderStudentDataSubmenu("list");
-            else if($("#studentImportStatus"))$("#studentImportStatus").textContent=msg+" "+result.errors.slice(0,3).join("; ");
+            if(result.added||result.updated) {
+                renderStudentDataSubmenu("list");
+                if (currentUser?.role === "admin") {
+                    try {
+                        // Pastikan profil dan data kelas sudah berada di cloud sebelum
+                        // Auth user dibuat, agar siswa bisa langsung memuat file/tugasnya.
+                        clearTimeout(backendSyncTimer);
+                        const cloudSaved = await syncStateToBackend();
+                        if (!cloudSaved) throw new Error("Data siswa belum berhasil disimpan ke Supabase Cloud.");
+                        const syncResult = await syncAdminAccounts();
+                        const syncRows = Array.isArray(syncResult?.results) ? syncResult.results : [];
+                        const failed = syncRows.filter(item => item.status !== "synced");
+                        const skipped = Array.isArray(syncResult?.skipped) ? syncResult.skipped : [];
+                        if (failed.length || skipped.length) {
+                            console.warn("Student registration saved, but Auth provisioning has issues:", {failed, skipped});
+                            toast(`Data siswa tersimpan (${result.added} baru, ${result.updated} diperbarui), tetapi ${failed.length + skipped.length} akun belum tersinkron. Periksa Console dan Edge Function.`);
+                        } else {
+                            toast(`Data siswa tersimpan. ${result.added + result.updated} data diproses dan sinkronisasi akun Supabase selesai.`);
+                        }
+                    } catch (error) {
+                        console.error("Student Auth provisioning failed:", error);
+                        toast(`Data siswa tersimpan, tetapi akun login belum berhasil dibuat di Supabase: ${error.message || error}`);
+                    }
+                } else {
+                    toast(msg+(result.errors.length?` — ${result.errors[0]}`:""));
+                }
+            } else {
+                const status = msg+" "+result.errors.slice(0,3).join("; ");
+                if($("#studentImportStatus"))$("#studentImportStatus").textContent=status;
+                toast(msg+(result.errors.length?` — ${result.errors[0]}`:""));
+            }
         }
 
         function getStandardStudentPassword(user) {
@@ -8836,7 +8867,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                     levelSelect?.addEventListener("change", refreshTeacherClasses);
                     refreshTeacherClasses();
                 }
-                $("#userForm").onsubmit = event => {
+                $("#userForm").onsubmit = async event => {
                     event.preventDefault();
                     const form = event.currentTarget;
                     const data = Object.fromEntries(new FormData(form));
@@ -8869,7 +8900,22 @@ html, body { max-width:100%; overflow-x:hidden; }
                             return toast("Gagal menyimpan password siswa. Periksa kapasitas penyimpanan browser.");
                         }
                         renderStudentDataSubmenu("registration");
-                        toast(`Berhasil memperbarui password ${updated} akun siswa.`);
+                        try {
+                            clearTimeout(backendSyncTimer);
+                            const cloudSaved = await syncStateToBackend();
+                            if (!cloudSaved) throw new Error("Data Student belum berhasil disimpan ke Supabase Cloud.");
+                            const syncResult = await syncAdminAccounts();
+                            const failed = (syncResult?.results || []).filter(item => item.status !== "synced");
+                            const skipped = syncResult?.skipped || [];
+                            if (failed.length || skipped.length) {
+                                toast(`Password ${updated} akun tersimpan, tetapi ${failed.length + skipped.length} akun belum tersinkron. Periksa Console/Edge Function.`);
+                            } else {
+                                toast(`Password ${updated} akun siswa tersimpan dan sinkronisasi Supabase selesai.`);
+                            }
+                        } catch (error) {
+                            console.error("Student bulk Auth sync failed:", error);
+                            toast(`Password tersimpan di data Administrator, tetapi sinkronisasi Auth gagal: ${error.message || error}`);
+                        }
                         return;
                     }
 
