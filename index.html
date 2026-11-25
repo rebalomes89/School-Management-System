@@ -5339,13 +5339,16 @@ html, body { max-width:100%; overflow-x:hidden; }
 
 
         // Flask backend bridge. Local storage remains an offline cache.
-        const API_URL = (window.ICT_API_URL || "").replace(/\/$/, "");
+        // GitHub Pages MUST point to the public HTTPS URL of the Flask API on cPanel.
+        // Example: window.ICT_API_URL = "https://api.your-domain.com";
+        const API_URL = String(window.ICT_API_URL || "").trim().replace(/\/$/, "");
         const API_TOKEN_KEY = "ict_backend_access_token";
         let backendAccessToken = localStorage.getItem(API_TOKEN_KEY) || "";
         let backendSyncTimer = null, backendSocket = null, backendSyncInProgress = false, backendSyncQueued = false;
 
         async function backendRequest(path, options = {}) {
-            if (!API_URL) throw new Error("Backend API_URL is not configured.");
+            if (!API_URL) throw new Error("Alamat backend belum diatur. Isi window.ICT_API_URL dengan URL Flask cPanel HTTPS.");
+            if (location.protocol === "https:" && API_URL.startsWith("http://")) throw new Error("Backend harus menggunakan HTTPS karena frontend GitHub Pages berjalan melalui HTTPS.");
             const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
             if (backendAccessToken) headers.Authorization = `Bearer ${backendAccessToken}`;
             const response = await fetch(`${API_URL}${path}`, { ...options, headers });
@@ -6500,7 +6503,11 @@ html, body { max-width:100%; overflow-x:hidden; }
 
         async function login(event) {
             event.preventDefault();
-            const username = String($("#loginUsername").value || "").trim();
+            const submitButton = $("#loginForm")?.querySelector('button[type="submit"]');
+            const originalButtonText = submitButton?.textContent || "Log in";
+            if (submitButton) { submitButton.disabled = true; submitButton.textContent = "Signing in..."; }
+            try {
+            const username = String($("#loginUsername")?.value || "").trim();
             const password = String($("#loginPassword").value || "");
             if (!username || !password) {
                 $("#loginError").textContent = "Username dan password wajib diisi.";
@@ -6631,7 +6638,13 @@ html, body { max-width:100%; overflow-x:hidden; }
             }
 
             showApp();
-
+            } catch (error) {
+                console.error("Login handler error:", error);
+                const errorBox = $("#loginError");
+                if (errorBox) errorBox.textContent = `Login gagal karena kesalahan aplikasi: ${error?.message || error}`;
+            } finally {
+                if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalButtonText; }
+            }
         }
 
 
@@ -10600,7 +10613,7 @@ html, body { max-width:100%; overflow-x:hidden; }
             const records = getScorelistFiltered();
             downloadScoreFile("ICT_Scorelist_All_Submissions.json", JSON.stringify(records, null, 2), "application/json;charset=utf-8");
         };
-        $("#scorelistTable").addEventListener("click", event => {
+        $("#scorelistTable")?.addEventListener("click", event => {
             const button = event.target.closest("[data-score-download]"); if (!button) return;
             const key = button.dataset.scoreDownload;
             const record = getScorelistFiltered().find((r,i) => String(r.id || i) === key);
@@ -11905,6 +11918,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
         /* LOGIN ROLE SELECTOR */
         document.querySelectorAll("[data-login-role]").forEach(button => {
+            button.type = "button";
             button.addEventListener("click", () => {
                 selectedLoginRole = button.dataset.loginRole;
                 document.querySelectorAll("[data-login-role]").forEach(item => {
@@ -11924,7 +11938,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
         /* LOGIN */
 
-        $("#loginForm").addEventListener(
+        $("#loginForm")?.addEventListener(
             "submit",
             login
         );
@@ -11933,12 +11947,12 @@ html, body { max-width:100%; overflow-x:hidden; }
 
         /* LOGOUT */
 
-        $("#logoutBtn").onclick = logout;
+        if ($("#logoutBtn")) $("#logoutBtn").onclick = logout;
 
 
         /* MAIN NAVIGATION */
 
-        $("#mainNav").addEventListener(
+        $("#mainNav")?.addEventListener(
             "click",
             event => {
 
@@ -12010,7 +12024,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
         /* MASTER DATA TABS */
 
-        $("#masterTabs").addEventListener(
+        $("#masterTabs")?.addEventListener(
             "click",
             event => {
 
