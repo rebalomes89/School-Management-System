@@ -5366,23 +5366,47 @@ html, body { max-width:100%; overflow-x:hidden; }
             bytes.forEach(byte => binary += String.fromCharCode(byte));
             return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
         }
+        function normalizeLoginRole(role) {
+            const value = String(role || "").trim().toLowerCase();
+            if (["administrator", "admin"].includes(value)) return "admin";
+            if (["teacher", "guru"].includes(value)) return "teacher";
+            if (["student", "siswa", "murid"].includes(value)) return "student";
+            return value;
+        }
+
         function loginEmailFor(username, role) {
             const clean = String(username || "").trim();
-            const normalizedRole = String(role || "").trim().toLowerCase();
+            const normalizedRole = normalizeLoginRole(role);
             if (!clean) throw new Error("Username/ISN/email belum diisi.");
-            // Teacher accounts MUST use the canonical school email for both
-            // Auth provisioning and sign-in. Do not use a display name or internal ID.
+
+            // Administrator memakai email Auth kanonis.
+            if (normalizedRole === "admin") {
+                const configuredEmail = String(ADMIN?.authEmail || "").trim().toLowerCase();
+                const entered = clean.toLowerCase();
+                if (entered.includes("@")) {
+                    if (configuredEmail && entered !== configuredEmail) {
+                        throw new Error("Gunakan email Administrator yang terdaftar: " + configuredEmail);
+                    }
+                    return entered;
+                }
+                if (configuredEmail) {
+                    throw new Error("Username Administrator harus menggunakan email: " + configuredEmail);
+                }
+                throw new Error("Email Administrator belum dikonfigurasi.");
+            }
+
             if (normalizedRole === "teacher") {
                 const email = clean.toLowerCase();
-                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
                     throw new Error("Email sekolah Teacher tidak valid. Periksa Data Master → Teachers.");
                 }
                 return email;
             }
-            // Admin and Student accounts use deterministic aliases. The same
-            // function is also used by the account-provisioning Edge Function.
-            const prefix = normalizedRole === "admin" ? "admin" : "student";
-            return `${prefix}-${base64UrlUtf8(clean)}@ict-school.example.com`;
+
+            if (normalizedRole === "student") {
+                return `student-${base64UrlUtf8(clean)}@ict-school.example.com`;
+            }
+            throw new Error(`Peran login tidak dikenal: ${role}`);
         }
         function safeCloudState(source) {
             const copy = JSON.parse(JSON.stringify(source || {}));
@@ -5426,17 +5450,25 @@ html, body { max-width:100%; overflow-x:hidden; }
             return merged;
         }
         async function supabaseLogin(username, password, role) {
-            const email = loginEmailFor(username, role);
+            const normalizedRole = normalizeLoginRole(role);
+            if (!ictSupabaseClient?.auth) {
+                throw new Error("Koneksi Supabase belum siap. Periksa koneksi internet, pemuatan supabase-js, URL project, dan publishable key.");
+            }
+            if (typeof password !== "string" || password.length === 0) {
+                throw new Error("Password wajib diisi. Password Administrator harus sama dengan password akun di Supabase Authentication.");
+            }
+            const email = loginEmailFor(username, normalizedRole);
+            console.info("Supabase Auth sign-in identity:", { role: normalizedRole, email });
             const { data, error } = await ictSupabaseClient.auth.signInWithPassword({ email, password });
             if (error) {
                 // Supabase returns this for both an incorrect password and an
                 // Auth user that has not yet been provisioned. Give role-specific
                 // recovery steps instead of implying the entered password is wrong.
                 if (/invalid login credentials/i.test(String(error.message || ""))) {
-                    const roleLabel = role === "admin" ? "Administrator" : role === "teacher" ? "Teacher" : "Student";
-                    const recovery = role === "admin"
-                        ? "Akun Administrator belum dibuat di Supabase Auth atau email aliasnya tidak cocok. Buat user admin-aWN0XzIwMjY@ict-school.example.com di Authentication → Users, set App Metadata role=admin, lalu gunakan password yang sama."
-                        : role === "student"
+                    const roleLabel = normalizedRole === "admin" ? "Administrator" : normalizedRole === "teacher" ? "Teacher" : "Student";
+                    const recovery = normalizedRole === "admin"
+                        ? "Login Administrator memakai email Auth robertus.hami@sunter.ipeka.sch.id. Masukkan email tersebut pada kolom username. Pastikan akun sudah ada di Supabase Authentication → Users, email sudah confirmed, App Metadata berisi role=admin, username=robertus.hami@sunter.ipeka.sch.id, active=true, dan password Auth sudah diatur sesuai password yang Anda tetapkan. Password tidak disimpan pada konstanta ADMIN di index.html; file frontend hanya mengirim password yang diketik ke Supabase Auth. Jika akun belum ada, buat melalui Authentication → Users → Add User; jika sudah ada, gunakan Reset Password di Supabase Dashboard."
+                        : normalizedRole === "student"
                             ? "Akun Student untuk ISN ini belum ada di Supabase Auth. Administrator harus login dari browser yang memiliki Master Student, lalu jalankan sinkronisasi akun. Password standar baru siswa adalah Ipeka#2026 kecuali sudah diubah Administrator/siswa. Pastikan Edge Function ict-sync-accounts sudah aktif."
                             : "Supabase tidak menemukan kombinasi email/password Teacher. Pastikan email yang diketik sama persis dengan Email Sekolah pada Data Master → Teachers (tanpa spasi), akun sudah disinkronkan Administrator, dan password Auth sama dengan password terbaru yang ditetapkan Administrator. Jika ragu, Administrator buka Data Master → Teachers → Set / Reset Password untuk membuat password baru (minimal 8 karakter), lalu tunggu notifikasi sinkronisasi berhasil. Pastikan Edge Function ict-sync-accounts sudah di-deploy.";
                     throw new Error(`Invalid login credentials. ${roleLabel}: ${recovery}`);
@@ -5451,7 +5483,7 @@ html, body { max-width:100%; overflow-x:hidden; }
             // Authorization role must be assigned by the trusted Admin API in
             // app_metadata; editable user_metadata is not an authorization source.
             const actualRole = String(meta.role || "").toLowerCase();
-            if (actualRole !== String(role).toLowerCase()) {
+            if (actualRole !== normalizedRole) {
                 await ictSupabaseClient.auth.signOut();
                 backendAccessToken = "";
                 throw new Error("Akun berhasil diautentikasi, tetapi App Metadata role belum sesuai. Administrator harus menetapkan role pada Supabase Auth → User → App Metadata.");
@@ -5462,7 +5494,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                 email: data.user.email,
                 role: actualRole,
                 username: String(userMeta.username || meta.username || username).trim(),
-                isn: String(userMeta.isn || meta.isn || (role === "student" ? username : "")).trim(),
+                isn: String(userMeta.isn || meta.isn || (normalizedRole === "student" ? username : "")).trim(),
                 name: String(userMeta.name || meta.name || username).trim(),
                 level: userMeta.level || meta.level || "",
                 className: userMeta.className || meta.className || "",
@@ -5674,15 +5706,13 @@ html, body { max-width:100%; overflow-x:hidden; }
 
 
         const ADMIN = {
-
-            username: "ICT_2026",
-
+            username: "robertus.hami@sunter.ipeka.sch.id",
+            // Password Administrator dikelola langsung oleh Supabase Auth.
+            // Jangan menaruh password atau service_role key di frontend publik.
             password: "",
-
+            authEmail: "robertus.hami@sunter.ipeka.sch.id",
             role: "admin",
-
             name: "ICT Administrator"
-
         };
 
 
@@ -6701,12 +6731,13 @@ html, body { max-width:100%; overflow-x:hidden; }
                     throw new Error("Akun Student belum diaktifkan oleh Administrator.");
                 }
             }
+            const normalizedRole = normalizeLoginRole(selectedLoginRole);
             const normalizedLoginName = username.trim().toLowerCase();
             // Student: username selalu ISN; Teacher: email sekolah; Admin: username admin.
             // Password dibandingkan persis (case-sensitive), tanpa trim agar spasi password tetap sah.
             let authenticatedUser = null;
             try {
-                authenticatedUser = await supabaseLogin(username, password, selectedLoginRole);
+                authenticatedUser = await supabaseLogin(username, password, normalizedRole);
                 await refreshStateFromBackend(false);
                 if (selectedLoginRole === "admin") {
                     // On first migration only, seed the cloud snapshot from this administrator's
@@ -6730,7 +6761,9 @@ html, body { max-width:100%; overflow-x:hidden; }
                 const accountName = String(user.role || "").toLowerCase() === "student"
                     ? String(user.isn || user.ISN || user.username || "").trim()
                     : String(user.username || user.email || "").trim();
-                return accountName.toLowerCase() === normalizedLoginName;
+                const adminIdentityMatch = normalizedRole === "admin" &&
+                    [String(ADMIN.username).toLowerCase(), String(ADMIN.authEmail).toLowerCase()].includes(normalizedLoginName);
+                return accountName.toLowerCase() === normalizedLoginName || adminIdentityMatch;
             }) || authenticatedUser;
             found = { ...found, ...authenticatedUser };
             if (selectedLoginRole === "admin" && !found.username) found.username = username;
@@ -8457,7 +8490,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
                                         <td>
 
-                                            ${user.username === "ICT_2026"
+                                            ${user.username === "robertus.hami@sunter.ipeka.sch.id"
 
                                                 ? "-"
 
