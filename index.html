@@ -5480,13 +5480,27 @@ html, body { max-width:100%; overflow-x:hidden; }
             localStorage.setItem(API_TOKEN_KEY, "supabase-auth");
             const meta = data.user.app_metadata || {};
             const userMeta = data.user.user_metadata || {};
-            // Authorization role must be assigned by the trusted Admin API in
-            // app_metadata; editable user_metadata is not an authorization source.
-            const actualRole = String(meta.role || "").toLowerCase();
+            // Authorization role must be assigned in trusted app_metadata.
+            // Never grant Administrator access from editable user_metadata.
+            const actualRole = String(meta.role || "").trim().toLowerCase();
+            const expectedAdminEmail = String(ADMIN.authEmail || "").trim().toLowerCase();
             if (actualRole !== normalizedRole) {
+                const detectedRole = actualRole || "(kosong/tidak ditemukan)";
+                const expectedRoleText = normalizedRole === "admin" ? "admin" : normalizedRole;
                 await ictSupabaseClient.auth.signOut();
                 backendAccessToken = "";
-                throw new Error("Akun berhasil diautentikasi, tetapi App Metadata role belum sesuai. Administrator harus menetapkan role pada Supabase Auth → User → App Metadata.");
+                if (normalizedRole === "admin") {
+                    throw new Error(
+                        `Password dan email Supabase berhasil diverifikasi untuk ${data.user.email || expectedAdminEmail}, tetapi login ditolak karena app_metadata.role saat ini ${detectedRole}. ` +
+                        `Perbaiki melalui Supabase SQL Editor dengan query UPDATE auth.users untuk email ${expectedAdminEmail}, ` +
+                        `lalu pastikan app_metadata berisi role=admin, username=${expectedAdminEmail}, active=true. ` +
+                        `Jalankan query verifikasi dan login ulang. Jangan mengubah user_metadata; role akses harus berada di app_metadata.`
+                    );
+                }
+                throw new Error(
+                    `Password berhasil diverifikasi, tetapi app_metadata.role=${detectedRole}; aplikasi mengharapkan role=${expectedRoleText}. ` +
+                    `Minta Administrator memperbaiki metadata akun pada Supabase Authentication.`
+                );
             }
             return {
                 id: data.user.id,
