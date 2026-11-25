@@ -2,6 +2,34 @@
 <html lang="id">
 
 <head>
+<script>
+/* ICT EARLY STARTUP GUARD: show fatal errors instead of a blank page. */
+(function () {
+  function show(message) {
+    function render() {
+      var panel = document.getElementById("ictFatalStartupPanel");
+      if (!panel) {
+        panel = document.createElement("div");
+        panel.id = "ictFatalStartupPanel";
+        panel.setAttribute("role", "alert");
+        panel.style.cssText = "position:fixed;z-index:2147483647;left:12px;right:12px;bottom:12px;padding:14px 16px;border-radius:12px;background:#fff1f0;color:#8a1c13;border:1px solid #ffccc7;font:14px/1.5 Arial,sans-serif;box-shadow:0 6px 24px #0003;white-space:pre-wrap";
+        (document.body || document.documentElement).appendChild(panel);
+      }
+      panel.textContent = "ICT School Management System tidak dapat dimuat sempurna.\n" + message + "\nPeriksa Console browser (F12) dan pastikan index.html terbaru sudah di GitHub Pages.";
+    }
+    if (document.body) render();
+    else document.addEventListener("DOMContentLoaded", render, { once:true });
+  }
+  window.addEventListener("error", function (event) {
+    if (event && event.message) show(event.message + (event.filename ? " (" + event.filename + ":" + event.lineno + ")" : ""));
+  });
+  window.addEventListener("unhandledrejection", function (event) {
+    var reason = event && event.reason;
+    show(reason && reason.message ? reason.message : String(reason || "Promise rejection"));
+  });
+})();
+</script>
+
     <!-- =====================================================
          01. META CONFIGURATION
          ===================================================== -->
@@ -3741,12 +3769,64 @@ html, body { max-width:100%; overflow-x:hidden; }
     color:#18743b !important;
 }
 
+
+/* TEACHER CLASS CHECKBOX ALIGNMENT FIX */
+#teacherRegistrationClasses {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px 12px !important;
+    align-items: stretch !important;
+}
+#teacherRegistrationClasses > label.checkbox-row,
+#teacherRegistrationClasses label.checkbox-row {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 48px !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    padding: 10px 14px !important;
+    text-align: left !important;
+    white-space: normal !important;
+}
+#teacherRegistrationClasses label.checkbox-row > input[type="checkbox"] {
+    display: block !important;
+    position: static !important;
+    flex: 0 0 18px !important;
+    width: 18px !important;
+    min-width: 18px !important;
+    max-width: 18px !important;
+    height: 18px !important;
+    min-height: 18px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    justify-self: auto !important;
+    align-self: center !important;
+    accent-color: #2868c8;
+}
+#teacherRegistrationClasses label.checkbox-row {
+    line-height: 1.35 !important;
+    color: #183866 !important;
+    font-weight: 650 !important;
+}
+@media (max-width: 640px) {
+    #teacherRegistrationClasses {
+        grid-template-columns: minmax(0, 1fr) !important;
+        gap: 8px !important;
+    }
+}
+
 </style>
 
 </head>
 
 
 <body>
+<noscript><div style='position:fixed;z-index:999999;top:0;left:0;right:0;padding:16px;background:#fff1f0;color:#8a1c13;font:14px Arial'>JavaScript harus diaktifkan untuk menjalankan ICT School Management System.</div></noscript>
 <!-- Supabase configuration: public browser key only.
      NEVER add SUPABASE_SERVICE_ROLE_KEY to this HTML or GitHub repository. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -5405,7 +5485,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
             if (normalizedRole === "teacher") {
                 const email = clean.toLowerCase();
-                if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+                if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
                     throw new Error("Email sekolah Teacher tidak valid. Periksa Data Master → Teachers.");
                 }
                 return email;
@@ -5443,7 +5523,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                     if (key === "users") {
                         const localUsers = Array.isArray(localState?.users) ? localState.users : [];
                         const byKey = new Map();
-                        [...remoteState.users, ...localUsers].forEach(user => {
+                        [...localUsers, ...remoteState.users].forEach(user => {
                             if (!user || typeof user !== "object") return;
                             const keyValue = String(user.username || user.email || user.isn || user.ISN || "").trim().toLowerCase();
                             if (!keyValue) return;
@@ -5457,6 +5537,48 @@ html, body { max-width:100%; overflow-x:hidden; }
             if (remoteState.scorelistMarks) merged.scorelistMarks = { ...(localState?.scorelistMarks || {}), ...remoteState.scorelistMarks };
             return merged;
         }
+        async function loadAuthenticatedAccountProfile(authenticatedUser, expectedRole) {
+            if (!ictSupabaseClient?.from || !authenticatedUser?.authUserId) {
+                throw new Error("Tidak dapat membaca profil akun dari database Supabase.");
+            }
+            const { data, error } = await ictSupabaseClient
+                .from("ict_profiles")
+                .select("id,role,username,email,name,isn,level,class_name,major,teaching_levels,subject,class_names,active")
+                .eq("id", authenticatedUser.authUserId)
+                .maybeSingle();
+
+            if (error) {
+                throw new Error(`Login Auth berhasil, tetapi profil database gagal dibaca: ${error.message}. Periksa tabel ict_profiles dan RLS.`);
+            }
+            if (!data) {
+                throw new Error("Akun Auth ditemukan, tetapi profil belum tersimpan pada public.ict_profiles. Minta Administrator sinkronisasi ulang akun.");
+            }
+            if (String(data.role || "").toLowerCase() !== String(expectedRole || "").toLowerCase()) {
+                throw new Error("Role pada public.ict_profiles tidak sesuai dengan role akun Supabase Auth.");
+            }
+            if (data.active === false) {
+                throw new Error("Akun dinonaktifkan oleh Administrator.");
+            }
+
+            return {
+                ...authenticatedUser,
+                id: data.id,
+                authUserId: data.id,
+                role: data.role,
+                username: String(data.username || authenticatedUser.username || ""),
+                email: String(data.email || authenticatedUser.email || ""),
+                name: String(data.name || authenticatedUser.name || ""),
+                isn: String(data.isn || authenticatedUser.isn || ""),
+                level: String(data.level || authenticatedUser.level || ""),
+                className: String(data.class_name || authenticatedUser.className || ""),
+                major: String(data.major || authenticatedUser.major || ""),
+                teachingLevels: Array.isArray(data.teaching_levels) ? data.teaching_levels : (authenticatedUser.teachingLevels || []),
+                subject: String(data.subject || authenticatedUser.subject || ""),
+                classNames: Array.isArray(data.class_names) ? data.class_names : (authenticatedUser.classNames || []),
+                active: data.active !== false
+            };
+        }
+
         async function supabaseLogin(username, password, role) {
             const normalizedRole = normalizeLoginRole(role);
             if (!ictSupabaseClient?.auth) {
@@ -5477,8 +5599,8 @@ html, body { max-width:100%; overflow-x:hidden; }
                     const recovery = normalizedRole === "admin"
                         ? "Login Administrator harus menggunakan email Auth robertus.hami@sunter.ipeka.sch.id pada kolom username (bukan username pendek). Supabase mengembalikan Invalid login credentials jika email belum ada, password tidak cocok, atau email belum confirmed. Periksa Supabase Dashboard → Authentication → Users: pastikan user dengan email tersebut ada dan Email Confirmed sudah aktif. Periksa App Metadata (bukan User Metadata): role=admin, username=robertus.hami@sunter.ipeka.sch.id, active=true. Password Auth harus sama dengan password yang Anda tetapkan di Supabase; password tidak disimpan pada konstanta ADMIN di index.html. Jika user belum ada, pilih Add User dan buat dengan email tersebut serta password baru; jika sudah ada, gunakan Send Password Recovery / Reset Password lalu tetapkan password baru. Setelah password diubah, login memakai email dan password terbaru."
                         : normalizedRole === "student"
-                            ? "Supabase Auth menolak kombinasi ISN dan password. Penyebabnya bisa ISN belum diprovisikan sebagai akun Auth, password tidak sama dengan password terakhir yang ditetapkan Administrator, akun dinonaktifkan, atau proses sinkronisasi belum selesai. Administrator harus login menggunakan email Administrator yang terdaftar, membuka Student Data → Student Registration untuk memastikan ISN unik dan nama siswa benar, lalu Student Account Registration untuk menetapkan password (minimal 8 karakter, huruf besar, huruf kecil, dan angka) atau Set / Reset Password pada siswa tersebut. Setelah itu jalankan sinkronisasi dan pastikan hasilnya menunjukkan status synced. Siswa login memakai ISN persis seperti yang didaftarkan dan password tersebut; perangkat siswa tidak perlu menyimpan Master Student lokal. Periksa juga deployment Edge Function ict-sync-accounts dan secrets SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY."
-                            : "Supabase tidak menemukan kombinasi email/password Teacher. Pastikan email yang diketik sama persis dengan Email Sekolah pada Data Master → Teachers (tanpa spasi), akun sudah disinkronkan Administrator, dan password Auth sama dengan password terbaru yang ditetapkan Administrator. Jika ragu, Administrator buka Data Master → Teachers → Set / Reset Password untuk membuat password baru (minimal 8 karakter), lalu tunggu notifikasi sinkronisasi berhasil. Pastikan Edge Function ict-sync-accounts sudah di-deploy.";
+                            ? "Login Student menggunakan ISN sebagai username dan password yang ditetapkan Administrator. Supabase Auth menolak kombinasi ISN/password. Penyebabnya bisa ISN belum diprovisikan sebagai akun Auth, password tidak sama dengan password terakhir yang ditetapkan Administrator, akun dinonaktifkan, atau proses sinkronisasi belum selesai. Administrator harus login menggunakan email Administrator yang terdaftar, membuka Student Data → Student Registration untuk memastikan ISN unik dan nama siswa benar, lalu Student Account Registration untuk menetapkan password (minimal 8 karakter, huruf besar, huruf kecil, dan angka) atau Set / Reset Password pada siswa tersebut. Setelah itu jalankan sinkronisasi dan pastikan hasilnya menunjukkan status synced. Siswa login memakai ISN persis seperti yang didaftarkan dan password tersebut; perangkat siswa tidak perlu menyimpan Master Student lokal. Periksa juga deployment Edge Function ict-sync-accounts dan secrets SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY."
+                            : "Login Teacher menggunakan email sekolah sebagai username dan password yang ditetapkan Administrator. Supabase tidak menemukan kombinasi email/password Teacher. Pastikan email yang diketik sama persis dengan Email Sekolah pada Data Master → Teachers (tanpa spasi), akun sudah disinkronkan Administrator, dan password Auth sama dengan password terbaru yang ditetapkan Administrator. Jika ragu, Administrator buka Data Master → Teachers → Set / Reset Password untuk membuat password baru (minimal 8 karakter), lalu tunggu notifikasi sinkronisasi berhasil. Pastikan Edge Function ict-sync-accounts sudah di-deploy.";
                     throw new Error(`Invalid login credentials. ${roleLabel}: ${recovery}`);
                 }
                 throw error;
@@ -5548,6 +5670,9 @@ html, body { max-width:100%; overflow-x:hidden; }
                 level: userMeta.level || meta.level || "",
                 className: userMeta.className || meta.className || "",
                 major: userMeta.major || meta.major || "",
+                teachingLevels: userMeta.teachingLevels || meta.teachingLevels || [],
+                subject: userMeta.subject || meta.subject || "",
+                classNames: userMeta.classNames || meta.classNames || [],
                 active: userMeta.active !== false && meta.active !== false
             };
         }
@@ -5680,21 +5805,53 @@ html, body { max-width:100%; overflow-x:hidden; }
 
         async function callAdminAccountFunction(payload) {
             const token = await getAdministratorAccessToken();
-            const response = await fetch(`${window.ICT_SUPABASE_URL}/functions/v1/ict-sync-accounts`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${token}`,
-                    "apikey": window.ICT_SUPABASE_ANON_KEY
-                },
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                const message = result.error || result.message || `Edge Function gagal (${response.status}).`;
-                throw new Error(`${message} Periksa deployment ict-sync-accounts dan Edge Function Secrets.`);
+            if (!ictSupabaseClient?.functions?.invoke) {
+                throw new Error("Supabase Functions SDK belum tersedia. Periksa CDN supabase-js dan muat ulang website.");
             }
-            return result;
+
+            // Supabase SDK mengelola URL, apikey, Authorization, dan respons Edge Function.
+            // Ini menghindari perakitan endpoint/header manual yang rentan salah konfigurasi.
+            let invocation;
+            try {
+                invocation = await ictSupabaseClient.functions.invoke("ict-sync-accounts", {
+                    body: payload,
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+            } catch (error) {
+                const detail = error?.message || String(error);
+                throw new Error(
+                    `Tidak dapat menghubungi Supabase Edge Function ict-sync-accounts: ${detail}. ` +
+                    "Periksa project URL, koneksi internet, deployment function, CORS, dan Edge Function Secrets."
+                );
+            }
+
+            const { data, error } = invocation || {};
+            if (error) {
+                let detail = error.message || String(error);
+                try {
+                    if (error.context && typeof error.context.json === "function") {
+                        const body = await error.context.json();
+                        detail = body.error || body.message || detail;
+                    }
+                } catch (_) {}
+                const name = String(error.name || "");
+                if (name.includes("FunctionsFetchError") || /failed to fetch|fetch failed/i.test(detail)) {
+                    throw new Error(
+                        `Koneksi ke Edge Function gagal (${detail}). Pastikan ict-sync-accounts sudah di-deploy ` +
+                        "pada project yang sama, CORS aktif, dan browser dapat mengakses Supabase."
+                    );
+                }
+                throw new Error(`Edge Function ict-sync-accounts: ${detail}`);
+            }
+            if (!data || data.ok !== true) {
+                const rowErrors = Array.isArray(data?.results)
+                    ? data.results.filter(item => item.status !== "synced")
+                        .map(item => `${item.username || item.email || "akun"}: ${item.reason || item.status}`)
+                        .join(" | ")
+                    : "";
+                throw new Error(data?.error || rowErrors || "Supabase tidak memberikan konfirmasi sukses dari ict-sync-accounts.");
+            }
+            return data;
         }
 
         async function provisionSupabaseAccount(account) {
@@ -5702,6 +5859,9 @@ html, body { max-width:100%; overflow-x:hidden; }
             const row = (result.results || [])[0];
             if (!row || row.status !== "synced") {
                 throw new Error(row?.reason || `Akun ${account.username} belum berhasil dibuat di Supabase Auth dan ict_profiles.`);
+            }
+            if (String(account.password || "").length >= 8 && row.password_updated !== true) {
+                throw new Error(`Supabase belum mengonfirmasi penerapan password untuk ${account.username}.`);
             }
             return row;
         }
@@ -5767,6 +5927,12 @@ html, body { max-width:100%; overflow-x:hidden; }
                     level: String(user.level || ""),
                     className: String(user.className || ""),
                     major: String(user.major || ""),
+                    teachingLevels: Array.isArray(user.teachingLevels) ? user.teachingLevels :
+                        (Array.isArray(user.levels) ? user.levels : (user.level ? [user.level] : [])),
+                    subject: String(user.subject || user.teacherSubject || ""),
+                    classNames: Object.values(user.levelProfiles || {}).flatMap(profile =>
+                        Array.isArray(profile.classNames) ? profile.classNames : []
+                    ),
                     active: user.active !== false
                 });
             });
@@ -5959,15 +6125,17 @@ html, body { max-width:100%; overflow-x:hidden; }
                     major: String(row.major || row.jurusan || row.peminatan || "").trim()
                 };
                 if (!account) {
-                    const initialPassword = String(state.studentStandardPassword || "Ipeka#2026");
-                    account = {...profile, password: initialPassword, standardPassword: initialPassword};
+                    // Master Student creates only a profile. Password is managed by Supabase Auth.
+                    account = {...profile, active: row.active !== false};
                     state.users.push(account);
                 } else {
                     Object.assign(account, Object.fromEntries(Object.entries(profile).filter(([key, value]) => key === "role" || (value !== "" && value != null))));
                     account.username = account.isn = isn;
-                    if (!String(account.password || "")) account.password = String(state.studentStandardPassword || account.standardPassword || "Ipeka#2026");
-                    if (!String(account.standardPassword || "")) account.standardPassword = String(state.studentStandardPassword || account.password);
+                    account.active = account.active !== false && row.active !== false;
                 }
+                // Never keep a plaintext password in browser storage.
+                delete account.password;
+                delete account.standardPassword;
             });
         })();
         try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (error) { console.warn("Migrasi data akun belum tersimpan:", error); }
@@ -6135,13 +6303,9 @@ html, body { max-width:100%; overflow-x:hidden; }
             const adminIndex = loaded.users.findIndex(user => user.role === "admin" || String(user.username || "").toLowerCase() === ADMIN.username.toLowerCase());
             if (adminIndex < 0) loaded.users.unshift({...ADMIN});
             else loaded.users[adminIndex] = {...ADMIN, ...loaded.users[adminIndex], role:"admin"};
-            // Sinkronisasi akun siswa dari Master Data. ISN adalah satu-satunya
-            // username siswa; password awal mengikuti password standar yang
-            // ditetapkan Administrator. Jangan memanggil helper yang membaca
-            // variabel state di sini karena state masih dalam proses inisialisasi.
-            let migratedStudentStandard = String(loaded.studentStandardPassword || "Ipeka#2026");
-            if (migratedStudentStandard.length < 8) migratedStudentStandard = "Ipeka#2026";
-            loaded.studentStandardPassword = migratedStudentStandard;
+            // Account identity is kept in the application profile; passwords are
+            // managed only by Supabase Auth and must never be persisted in browser storage.
+            loaded.studentStandardPassword = "";
             loaded.users.forEach(user => {
                 if (user.role === "student") {
                     user.isn = String(user.isn || user.username || "").trim();
@@ -6149,13 +6313,14 @@ html, body { max-width:100%; overflow-x:hidden; }
                     user.name = String(user.name || user.studentName || user.fullName || "").trim();
                     user.level = normalizeLevel(user.level || user.jenjang || user.educationLevel || "");
                     user.className = String(user.className || user.class || user.gradeClass || user.kelas || "").trim();
-                    if (!String(user.password || "")) user.password = migratedStudentStandard;
-                    if (!String(user.standardPassword || "")) user.standardPassword = migratedStudentStandard;
                 } else if (user.role === "teacher") {
-                    user.username = String(user.username || user.email || "").trim();
+                    user.username = String(user.schoolEmail || user.email || user.username || "").trim().toLowerCase();
                     user.email = user.username;
-                    if (!String(user.password || "")) user.password = String(user.standardPassword || "");
-                    if (!String(user.standardPassword || "")) user.standardPassword = String(user.password || "");
+                }
+                if (["teacher", "student"].includes(String(user.role || "").toLowerCase())) {
+                    delete user.password;
+                    delete user.standardPassword;
+                    delete user.passwordResetToken;
                 }
             });
             loaded.classes = Array.isArray(loaded.classes) ? loaded.classes : base.classes;
@@ -6949,6 +7114,9 @@ html, body { max-width:100%; overflow-x:hidden; }
             let authenticatedUser = null;
             try {
                 authenticatedUser = await supabaseLogin(username, password, normalizedRole);
+                if (["teacher", "student"].includes(normalizedRole)) {
+                    authenticatedUser = await loadAuthenticatedAccountProfile(authenticatedUser, normalizedRole);
+                }
                 await refreshStateFromBackend(false);
                 if (selectedLoginRole === "admin") {
                     // On first migration only, seed the cloud snapshot from this administrator's
@@ -8520,10 +8688,8 @@ html, body { max-width:100%; overflow-x:hidden; }
         }
 
         function getStandardStudentPassword(user) {
-            // Tidak ada password siswa bawaan di frontend.
-            // Password harus ditetapkan Administrator melalui Student Account Registration
-            // atau Set / Reset Password, lalu diprovisikan ke Supabase Auth.
-            return String(state?.studentStandardPassword || "");
+            // Password tidak disimpan atau dipulihkan dari browser. Supabase Auth adalah satu-satunya sumber.
+            return "";
         }
 
         function getMasterStudentRows() {
@@ -8659,7 +8825,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                             <label>Email Sekolah Guru<input name="username" type="email" autocomplete="email" placeholder="nama@sekolah.sch.id" required><small class="muted">Email sekolah menjadi username tetap. Email yang sama dapat digunakan untuk registrasi pada beberapa jenjang.</small></label>
                             <label>Teacher Subject<select name="subject" id="teacherRegistrationSubject" required><option value="">Pilih subject</option>${(state.subjects || []).map(subject => `<option value="${esc(subject)}">${esc(subject)}</option>`).join("")}</select></label>
                             <div class="form-section" style="grid-column:1/-1"><h4>Pilih Kelas yang Akan Diajar</h4><div id="teacherRegistrationClasses" class="form-grid"><p class="muted">Pilih jenjang untuk menampilkan kelas.</p></div></div>
-                            <label>Password Awal / Standar Guru<input name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Minimal 8 karakter"><small class="muted">Wajib untuk akun baru: minimal 8 karakter, huruf besar, huruf kecil, dan angka. Untuk email yang sudah terdaftar, password lama tetap digunakan.</small></label>
+                            <label>Password Login Guru<input name="password" id="teacherRegistrationPassword" type="password" autocomplete="new-password" minlength="8" required placeholder="Buat password login guru"><small class="muted">Wajib diisi Administrator. Minimal 8 karakter, terdiri dari huruf besar, huruf kecil, dan angka. Password ini langsung diterapkan ke Supabase Auth.</small></label>
                             <div class="form-end"><button class="btn primary" type="submit">Register Teacher</button></div>
                         `}
                     </form>
@@ -9066,25 +9232,28 @@ html, body { max-width:100%; overflow-x:hidden; }
                             const profile = user.levelProfiles?.[level] || {};
                             return `<tr><td>${esc(user.name)}</td><td>${esc(user.username)}</td><td>${esc(profile.subject || user.subject || "-")}</td><td>${esc((profile.classNames || []).join(", ") || "-")}</td><td><button type="button" class="btn secondary" data-reset-account-password="${esc(user.username)}" data-account-role="teacher">Set / Reset Password</button> <button type="button" class="btn secondary" data-delete-user="${esc(user.username)}">Delete</button></td></tr>`;
                         }).join("") || `<tr><td colspan="5">Belum ada guru terdaftar pada jenjang ${esc(level)}.</td></tr>`;
-                        $$("#masterContent [data-reset-account-password]").forEach(button => button.onclick = () => {
+                        $$("#masterContent [data-reset-account-password]").forEach(button => button.onclick = async () => {
                             const target = state.users.find(user => user.role === "teacher" && String(user.username || user.email || "").toLowerCase() === String(button.dataset.resetAccountPassword || "").toLowerCase());
                             if (!target) return toast("Akun guru tidak ditemukan.");
-                            const password = prompt(`Masukkan password baru untuk ${target.name || target.username}:`);
+                            const identity = String(target.username || target.email || "").trim().toLowerCase();
+                            const password = prompt(`Masukkan password login baru untuk ${target.name || identity}:`);
                             if (password === null) return;
                             if (!validateAdminPassword(password)) return toast("Password minimal 8 karakter dan harus mengandung huruf besar, huruf kecil, serta angka.");
                             const confirmPassword = prompt("Konfirmasi password baru:");
                             if (confirmPassword === null) return;
                             if (confirmPassword !== password) return toast("Konfirmasi password tidak sama.");
-                            target.password = password;
-                            target.standardPassword = password;
+                            if (currentUser?.role !== "admin") return toast("Hanya Administrator yang dapat mengubah password guru.");
                             target.passwordUpdatedAt = new Date().toISOString();
-                            saveState();
-                            if (currentUser?.role === "admin") {
-                                syncAdminAccounts().then(() => toast("Password Teacher disimpan dan sinkronisasi Supabase dijalankan."))
-                                    .catch(error => {
-                                        console.error("Teacher password sync:", error);
-                                        toast(`Password lokal tersimpan, tetapi sinkronisasi Supabase gagal: ${error.message || error}`);
-                                    });
+                            try {
+                                const result = await syncAdminAccounts({ passwordOverrides: { [identity]: password } });
+                                const row = (result?.results || []).find(item => String(item.username || "").trim().toLowerCase() === identity);
+                                if (!row || row.status !== "synced" || row.password_updated !== true) {
+                                throw new Error(row?.reason || "Supabase Auth belum mengonfirmasi penerapan password baru.");
+                            }
+                                toast(`Password login guru ${identity} berhasil diperbarui di Supabase Auth.`);
+                            } catch (error) {
+                                console.error("Teacher password reset failed:", error);
+                                toast(`Password guru gagal diperbarui: ${error.message || error}`);
                             }
                         });
                         $$("#masterContent [data-delete-user]").forEach(button => button.onclick = () => {
@@ -9180,8 +9349,8 @@ html, body { max-width:100%; overflow-x:hidden; }
                         authSynced: false
                     };
                     const teacherPassword = String(data.password || "");
-                    if (!existing && !validateAdminPassword(teacherPassword)) {
-                        return toast("Password akun guru baru wajib minimal 8 karakter, mengandung huruf besar, huruf kecil, dan angka.");
+                    if (!validateAdminPassword(teacherPassword)) {
+                        return toast("Password login guru wajib diisi Administrator: minimal 8 karakter, mengandung huruf besar, huruf kecil, dan angka.");
                     }
                     if (teacherPassword && !validateAdminPassword(teacherPassword)) {
                         return toast("Password minimal 8 karakter dan wajib mengandung huruf besar, huruf kecil, serta angka.");
@@ -9230,9 +9399,12 @@ html, body { max-width:100%; overflow-x:hidden; }
                         await provisionSupabaseAccount({
                             role: "teacher", username: normalizedEmail, email: normalizedEmail,
                             password: teacherPassword,
-                            forcePasswordUpdate: Boolean(teacherPassword),
+                            forcePasswordUpdate: true,
                             passwordUpdatedAt: timestamp,
                             name, level: teacherLevel, className: selectedClasses.map(item => item.name || item.className).join(", "),
+                            teachingLevels: account.teachingLevels,
+                            subject,
+                            classNames: selectedClasses.map(item => String(item.name || item.className || "")),
                             active: true
                         });
                         account.authSynced = true;
@@ -9315,6 +9487,8 @@ html, body { max-width:100%; overflow-x:hidden; }
                     }
                     target.passwordUpdatedAt = new Date().toISOString();
                     target.passwordUpdatedBy = "admin";
+                    delete target.password;
+                    delete target.standardPassword;
                     saveState();
                     renderMaster(tab);
                     (async () => {
@@ -9322,9 +9496,9 @@ html, body { max-width:100%; overflow-x:hidden; }
                             clearTimeout(backendSyncTimer);
                             const cloudSaved = await syncStateToBackend();
                             if (!cloudSaved) throw new Error("Data profil belum berhasil disimpan ke Supabase.");
-                            const options = role === "student"
-                                ? { passwordOverrides: { [identity.trim().toLowerCase()]: newPassword } }
-                                : {};
+                            const options = {
+                                passwordOverrides: { [identity.trim().toLowerCase()]: newPassword }
+                            };
                             const syncResult = await syncAdminAccounts(options);
                             const row = (syncResult?.results || []).find(item =>
                                 String(item.username || "").trim().toLowerCase() === identity.trim().toLowerCase()
@@ -13165,7 +13339,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                     String(user.role || "").toLowerCase() === role &&
                     String(user.username || user.email || user.isn || "").trim().toLowerCase() === username.toLowerCase()
                 );
-                currentUser = {
+                let restoredUser = {
                     ...(found || {}),
                     id: authUser.id,
                     authUserId: authUser.id,
@@ -13178,9 +13352,20 @@ html, body { max-width:100%; overflow-x:hidden; }
                     className: meta.className || found?.className || "",
                     major: meta.major || found?.major || ""
                 };
+                if (["teacher", "student"].includes(role)) {
+                    restoredUser = await loadAuthenticatedAccountProfile(restoredUser, role);
+                }
+                currentUser = restoredUser;
                 if (role === "student") {
                     currentUser.isn = currentUser.username;
+                    // Do not require local Master Student on the student's own device.
                     currentUser = syncStudentAccountFromMaster(currentUser);
+                    if (!currentUser.className || !currentUser.level) {
+                        throw new Error("Profil Student di Supabase belum memiliki jenjang dan kelas. Administrator perlu melengkapi data siswa.");
+                    }
+                }
+                if (role === "teacher" && !currentUser.email) {
+                    throw new Error("Profil Teacher di Supabase belum memiliki email sekolah.");
                 }
                 try { await loadNormalizedAssessmentsFallback(); }
                 catch (assessmentLoadError) {
@@ -13228,8 +13413,17 @@ html, body { max-width:100%; overflow-x:hidden; }
             showICTStartupDiagnostic("Proses aplikasi gagal: " + reason + " Periksa Console dan Supabase Edge Function Logs.");
         });
 
-        applyTheme();
-        restoreSupabaseSession();
+        try {
+            applyTheme();
+        } catch (themeError) {
+            console.error("ICT theme initialization failed:", themeError);
+            showICTStartupDiagnostic("Tampilan tema gagal dimuat: " + (themeError?.message || themeError));
+        }
+        // The login UI remains available even if Supabase session restoration fails.
+        restoreSupabaseSession().catch(error => {
+            console.error("ICT session bootstrap failed:", error);
+            showICTStartupDiagnostic("Sesi Supabase tidak dapat dipulihkan: " + (error?.message || error));
+        });
 
 
     </script>
