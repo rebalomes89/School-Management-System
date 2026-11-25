@@ -3749,7 +3749,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
 <body>
 <!-- GANTI URL backend di bawah dengan URL HTTPS Flask API yang sudah aktif. -->
-<script>window.ICT_API_URL = window.ICT_API_URL || "https://api.GANTI-DOMAIN-ANDA.com"; window.ICT_REQUIRE_LOCAL_SERVER = true;</script>
+<script>window.ICT_API_URL = window.ICT_API_URL || "https://GANTI-NAMA-SERVICE.onrender.com"; window.ICT_REQUIRE_LOCAL_SERVER = true;</script>
 
 
     <!-- =====================================================
@@ -5507,7 +5507,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
             username: "ICT_2026",
 
-            password: "nanu2010",
+            password: "",
 
             role: "admin",
 
@@ -6523,8 +6523,8 @@ html, body { max-width:100%; overflow-x:hidden; }
             // Password dibandingkan persis (case-sensitive), tanpa trim agar spasi password tetap sah.
             let backendUser = null;
             if (API_URL) {
-                if (/GANTI-DOMAIN-ANDA|YOUR-USERNAME|example\\.com/i.test(API_URL)) {
-                    $("#loginError").textContent = "Alamat backend belum dikonfigurasi. Ganti window.ICT_API_URL dengan URL HTTPS API cPanel Anda.";
+                if (/GANTI-DOMAIN-ANDA|GANTI-NAMA-SERVICE|YOUR-USERNAME|example\\.com/i.test(API_URL)) {
+                    $("#loginError").textContent = "Alamat backend belum dikonfigurasi. Ganti window.ICT_API_URL dengan URL HTTPS API Render Anda.";
                     return;
                 }
                 try {
@@ -6535,11 +6535,11 @@ html, body { max-width:100%; overflow-x:hidden; }
                     const detail = String(error?.message || "");
                     $("#loginError").textContent = detail
                         ? `Login server gagal: ${detail}`
-                        : "Login server gagal. Periksa URL API, SSL, koneksi database, CORS, dan akun.";
+                        : "Login server gagal. Periksa URL API Render, SSL, koneksi PostgreSQL, CORS, dan akun.";
                     return;
                 }
             } else if (window.ICT_REQUIRE_LOCAL_SERVER) {
-                $("#loginError").textContent = "Alamat server lokal belum dikonfigurasi.";
+                $("#loginError").textContent = "Alamat backend Render belum dikonfigurasi.";
                 return;
             }
             let found = backendUser || (state.users || []).find(user => {
@@ -11938,10 +11938,11 @@ html, body { max-width:100%; overflow-x:hidden; }
 
         /* LOGIN */
 
-        $("#loginForm")?.addEventListener(
-            "submit",
-            login
-        );
+        $("#loginForm")?.addEventListener("submit", login);
+        // Delegated fallback: login remains functional even if the form is re-rendered.
+        document.addEventListener("submit", event => {
+            if (event.target?.id === "loginForm" && !event.defaultPrevented) login(event);
+        }, true);
         $("#resetDeviceLogin")?.addEventListener("click", resetDeviceLogin);
 
 

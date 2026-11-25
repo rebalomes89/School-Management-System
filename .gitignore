@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+*.dump
+*.json
+ict-school-state.json
+backups/

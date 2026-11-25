@@ -1,0 +1,14 @@
+ICT SCHOOL MANAGEMENT SYSTEM — RENDER + GITHUB
+
+1. Baca README.md.
+2. Upload seluruh isi folder ini ke satu repository GitHub.
+3. Deploy render.yaml sebagai Render Blueprint.
+4. Isi ADMIN_PASSWORD dan CORS_ORIGINS saat Render meminta.
+5. Ganti URL GANTI-NAMA-SERVICE pada index.html dengan URL Render Web Service.
+6. Aktifkan GitHub Pages dari branch main / root.
+7. Migrasikan data lama dari browser yang menyimpan localStorage.
+8. Uji login Admin, Teacher, Student dan seluruh data sebelum penggunaan nyata.
+
+GitHub Pages = frontend statis.
+Render Web Service = Flask API.
+Render PostgreSQL = database.

@@ -1,0 +1,32 @@
+databases:
+  - name: ict-school-postgres
+    databaseName: ict_school
+    user: ict_school_user
+    plan: basic-256mb
+
+services:
+  - type: web
+    name: ict-school-api
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ict-school-postgres
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: ICT_2026
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: JWT_ACCESS_TOKEN_EXPIRES
+        value: "28800"
