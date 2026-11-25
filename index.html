@@ -3747,16 +3747,29 @@ html, body { max-width:100%; overflow-x:hidden; }
 
 
 <body>
-<!-- Supabase configuration is loaded below. No Flask backend is used. -->
+<!-- Supabase configuration: public browser key only.
+     NEVER add SUPABASE_SERVICE_ROLE_KEY to this HTML or GitHub repository. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   window.ICT_SUPABASE_URL = "https://yiwpryvisnqruvgeazzo.supabase.co";
-  window.ICT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_sJHtQhwf54mCkh6UuWfVmA_NCY6jgXJ";
-  window.ictSupabase = window.supabase.createClient(
-    window.ICT_SUPABASE_URL,
-    window.ICT_SUPABASE_PUBLISHABLE_KEY,
-    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
-  );
+  window.ICT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlpd3ByeXZpc25xcnV2Z2VhenpvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU1NjkxNzAsImV4cCI6MjExMTE0NTE3MH0.nxeGRRWB8xM6KLVeiahLqYkmJQabCPEP_mJ23yV-Wj4";
+  // Single canonical Supabase client configuration. The anon key is intended
+  // for browser use and must be protected by database RLS policies.
+  try {
+    if (!window.supabase?.createClient) {
+      throw new Error("Supabase JS CDN gagal dimuat. Periksa koneksi internet atau pemblokir CDN.");
+    }
+    window.ictSupabase = window.supabase.createClient(
+      window.ICT_SUPABASE_URL,
+      window.ICT_SUPABASE_ANON_KEY,
+      { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+    );
+    window.__ICT_SUPABASE_INIT_ERROR = "";
+  } catch (error) {
+    window.ictSupabase = null;
+    window.__ICT_SUPABASE_INIT_ERROR = error?.message || String(error);
+    console.error("ICT Supabase initialization failed:", error);
+  }
 </script>
 
 
@@ -5383,15 +5396,10 @@ html, body { max-width:100%; overflow-x:hidden; }
             if (normalizedRole === "admin") {
                 const configuredEmail = String(ADMIN?.authEmail || "").trim().toLowerCase();
                 const entered = clean.toLowerCase();
-                if (entered.includes("@")) {
-                    if (configuredEmail && entered !== configuredEmail) {
-                        throw new Error("Gunakan email Administrator yang terdaftar: " + configuredEmail);
-                    }
-                    return entered;
+                if (configuredEmail && entered !== configuredEmail) {
+                    throw new Error("Kolom username Administrator wajib diisi dengan email Auth: " + configuredEmail);
                 }
-                if (configuredEmail) {
-                    throw new Error("Username Administrator harus menggunakan email: " + configuredEmail);
-                }
+                if (configuredEmail) return configuredEmail;
                 throw new Error("Email Administrator belum dikonfigurasi.");
             }
 
@@ -5467,9 +5475,9 @@ html, body { max-width:100%; overflow-x:hidden; }
                 if (/invalid login credentials/i.test(String(error.message || ""))) {
                     const roleLabel = normalizedRole === "admin" ? "Administrator" : normalizedRole === "teacher" ? "Teacher" : "Student";
                     const recovery = normalizedRole === "admin"
-                        ? "Login Administrator memakai email Auth robertus.hami@sunter.ipeka.sch.id. Masukkan email tersebut pada kolom username. Pastikan akun sudah ada di Supabase Authentication → Users, email sudah confirmed, App Metadata berisi role=admin, username=robertus.hami@sunter.ipeka.sch.id, active=true, dan password Auth sudah diatur sesuai password yang Anda tetapkan. Password tidak disimpan pada konstanta ADMIN di index.html; file frontend hanya mengirim password yang diketik ke Supabase Auth. Jika akun belum ada, buat melalui Authentication → Users → Add User; jika sudah ada, gunakan Reset Password di Supabase Dashboard."
+                        ? "Login Administrator harus menggunakan email Auth robertus.hami@sunter.ipeka.sch.id pada kolom username (bukan username pendek). Supabase mengembalikan Invalid login credentials jika email belum ada, password tidak cocok, atau email belum confirmed. Periksa Supabase Dashboard → Authentication → Users: pastikan user dengan email tersebut ada dan Email Confirmed sudah aktif. Periksa App Metadata (bukan User Metadata): role=admin, username=robertus.hami@sunter.ipeka.sch.id, active=true. Password Auth harus sama dengan password yang Anda tetapkan di Supabase; password tidak disimpan pada konstanta ADMIN di index.html. Jika user belum ada, pilih Add User dan buat dengan email tersebut serta password baru; jika sudah ada, gunakan Send Password Recovery / Reset Password lalu tetapkan password baru. Setelah password diubah, login memakai email dan password terbaru."
                         : normalizedRole === "student"
-                            ? "ISN tidak ditemukan sebagai akun login di Supabase Auth. Pastikan Administrator sudah mendaftarkan ISN dan nama siswa pada menu Student Registration, menetapkan password pada Student Account Registration, lalu sinkronisasi akun ke Supabase berhasil. Perangkat siswa tidak perlu menyimpan Master Student secara lokal. Pastikan Edge Function ict-sync-accounts sudah di-deploy dan secret Supabase lengkap."
+                            ? "Supabase Auth menolak kombinasi ISN dan password. Penyebabnya bisa ISN belum diprovisikan sebagai akun Auth, password tidak sama dengan password terakhir yang ditetapkan Administrator, akun dinonaktifkan, atau proses sinkronisasi belum selesai. Administrator harus login menggunakan email Administrator yang terdaftar, membuka Student Data → Student Registration untuk memastikan ISN unik dan nama siswa benar, lalu Student Account Registration untuk menetapkan password (minimal 8 karakter, huruf besar, huruf kecil, dan angka) atau Set / Reset Password pada siswa tersebut. Setelah itu jalankan sinkronisasi dan pastikan hasilnya menunjukkan status synced. Siswa login memakai ISN persis seperti yang didaftarkan dan password tersebut; perangkat siswa tidak perlu menyimpan Master Student lokal. Periksa juga deployment Edge Function ict-sync-accounts dan secrets SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY."
                             : "Supabase tidak menemukan kombinasi email/password Teacher. Pastikan email yang diketik sama persis dengan Email Sekolah pada Data Master → Teachers (tanpa spasi), akun sudah disinkronkan Administrator, dan password Auth sama dengan password terbaru yang ditetapkan Administrator. Jika ragu, Administrator buka Data Master → Teachers → Set / Reset Password untuk membuat password baru (minimal 8 karakter), lalu tunggu notifikasi sinkronisasi berhasil. Pastikan Edge Function ict-sync-accounts sudah di-deploy.";
                     throw new Error(`Invalid login credentials. ${roleLabel}: ${recovery}`);
                 }
@@ -5484,6 +5492,33 @@ html, body { max-width:100%; overflow-x:hidden; }
             // Never grant Administrator access from editable user_metadata.
             const actualRole = String(meta.role || "").trim().toLowerCase();
             const expectedAdminEmail = String(ADMIN.authEmail || "").trim().toLowerCase();
+
+            // Administrator requires a confirmed canonical Auth identity and trusted metadata.
+            // Supabase Auth verifies the password; app_metadata controls authorization.
+            if (normalizedRole === "admin") {
+                const authEmail = String(data.user.email || "").trim().toLowerCase();
+                if (!data.user.email_confirmed_at) {
+                    await ictSupabaseClient.auth.signOut();
+                    backendAccessToken = "";
+                    throw new Error(`Email Auth Administrator ${expectedAdminEmail} belum confirmed. Buka Supabase Authentication → Users, pilih user tersebut, lalu lakukan Confirm User / konfirmasi email.`);
+                }
+                if (authEmail !== expectedAdminEmail) {
+                    await ictSupabaseClient.auth.signOut();
+                    backendAccessToken = "";
+                    throw new Error(`Email Auth yang berhasil login adalah ${authEmail || "(kosong)"}, bukan email Administrator yang diwajibkan ${expectedAdminEmail}.`);
+                }
+                const adminMetaUsername = String(meta.username || "").trim().toLowerCase();
+                if (adminMetaUsername !== expectedAdminEmail || meta.active !== true) {
+                    await ictSupabaseClient.auth.signOut();
+                    backendAccessToken = "";
+                    throw new Error(
+                        `App Metadata Administrator belum sesuai. Atur pada Supabase Authentication → Users → user → App Metadata: ` +
+                        `role=admin, username=${expectedAdminEmail}, active=true. Saat ini username=${adminMetaUsername || "(kosong)"}, active=${String(meta.active)}. ` +
+                        `Jangan menaruh role pada User Metadata. Anda dapat menjalankan SQL migration admin_app_metadata_fix.sql.`
+                    );
+                }
+            }
+
             if (actualRole !== normalizedRole) {
                 const detectedRole = actualRole || "(kosong/tidak ditemukan)";
                 const expectedRoleText = normalizedRole === "admin" ? "admin" : normalizedRole;
@@ -5538,16 +5573,147 @@ html, body { max-width:100%; overflow-x:hidden; }
             }
             return true;
         }
-        async function syncAdminAccounts() {
+        async function loadNormalizedAssessmentsFallback() {
+            if (!ictSupabaseClient?.from || !currentUser) return false;
+            if (Array.isArray(state.assignments) && state.assignments.length) return false;
+            const { data: assessments, error: assessmentError } = await ictSupabaseClient
+                .from("ict_assessments").select("*").order("updated_at", { ascending: false });
+            if (assessmentError) throw assessmentError;
+            if (!Array.isArray(assessments) || !assessments.length) return false;
+
+            const { data: questions, error: questionError } = await ictSupabaseClient
+                .from("ict_questions").select("*").order("position", { ascending: true });
+            if (questionError) throw questionError;
+
+            let keyRows = [];
+            if (["admin", "teacher"].includes(String(currentUser.role || ""))) {
+                const { data, error } = await ictSupabaseClient
+                    .from("ict_question_keys").select("question_id,answer_key,explanation");
+                if (error) console.warn("Question key lookup skipped by RLS:", error.message);
+                else keyRows = data || [];
+            }
+            const keyMap = new Map(keyRows.map(row => [String(row.question_id), row]));
+            const questionsByAssessment = new Map();
+            (questions || []).forEach(row => {
+                const list = questionsByAssessment.get(String(row.assessment_id)) || [];
+                const key = keyMap.get(String(row.id));
+                const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+                list.push({
+                    ...payload,
+                    id: row.id,
+                    type: row.question_type || payload.type || payload.questionType || "short-answer",
+                    text: row.question_text || payload.text || payload.question || "",
+                    points: Number(row.points || payload.points || 0),
+                    options: row.options || payload.options || [],
+                    ...(key ? { answer: key.answer_key, explanation: key.explanation } : {})
+                });
+                questionsByAssessment.set(String(row.assessment_id), list);
+            });
+            state.assignments = assessments.map(row => {
+                const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+                return {
+                    ...payload,
+                    id: row.id,
+                    title: row.title || payload.title || "",
+                    subject: row.subject || payload.subject || "",
+                    level: row.level || payload.level || "",
+                    classAccess: row.class_access || payload.classAccess || payload.classes || [],
+                    status: row.status || payload.status || "draft",
+                    questions: questionsByAssessment.get(String(row.id)) || []
+                };
+            });
+            return true;
+        }
+
+        async function getAdministratorAccessToken() {
+            if (!ictSupabaseClient?.auth) {
+                throw new Error("Supabase client belum siap. Muat ulang website dan periksa koneksi Supabase.");
+            }
+            if (currentUser?.role !== "admin") {
+                throw new Error("Aksi registrasi hanya dapat dilakukan oleh Administrator yang sedang login.");
+            }
+
+            let token = "";
+            let sessionError = null;
+            try {
+                const { data, error } = await ictSupabaseClient.auth.getSession();
+                sessionError = error;
+                token = String(data?.session?.access_token || "");
+            } catch (error) {
+                sessionError = error;
+            }
+
+            // Some browser/session restoration paths retain the freshly issued
+            // access token in memory while getSession() has not hydrated storage.
+            if (!token && backendAccessToken) token = String(backendAccessToken);
+
+            // Attempt one refresh before reporting a missing session.
+            if (!token) {
+                try {
+                    const { data, error } = await ictSupabaseClient.auth.refreshSession();
+                    if (!error) token = String(data?.session?.access_token || "");
+                    if (token) backendAccessToken = token;
+                } catch (refreshError) {
+                    console.warn("Administrator session refresh failed:", refreshError);
+                }
+            }
+            if (!token) {
+                throw new Error(
+                    "Token sesi Administrator tidak ditemukan. Silakan logout, login kembali memakai email Administrator, " +
+                    "lalu ulangi registrasi. Detail: " + (sessionError?.message || "Supabase Auth tidak mengembalikan access token.")
+                );
+            }
+
+            // Verify the bearer token against Supabase Auth; never trust local role alone.
+            const { data: userData, error: userError } = await ictSupabaseClient.auth.getUser(token);
+            if (userError || !userData?.user) {
+                backendAccessToken = "";
+                throw new Error("Sesi Administrator sudah kedaluwarsa atau tidak valid. Logout lalu login kembali.");
+            }
+            const appMeta = userData.user.app_metadata || {};
+            if (String(appMeta.role || "").toLowerCase() !== "admin" || appMeta.active === false) {
+                throw new Error("Token Supabase ini bukan sesi Administrator aktif. Periksa App Metadata role=admin dan active=true.");
+            }
+            backendAccessToken = token;
+            return token;
+        }
+
+        async function callAdminAccountFunction(payload) {
+            const token = await getAdministratorAccessToken();
+            const response = await fetch(`${window.ICT_SUPABASE_URL}/functions/v1/ict-sync-accounts`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`,
+                    "apikey": window.ICT_SUPABASE_ANON_KEY
+                },
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                const message = result.error || result.message || `Edge Function gagal (${response.status}).`;
+                throw new Error(`${message} Periksa deployment ict-sync-accounts dan Edge Function Secrets.`);
+            }
+            return result;
+        }
+
+        async function provisionSupabaseAccount(account) {
+            const result = await callAdminAccountFunction({ accounts: [account] });
+            const row = (result.results || [])[0];
+            if (!row || row.status !== "synced") {
+                throw new Error(row?.reason || `Akun ${account.username} belum berhasil dibuat di Supabase Auth dan ict_profiles.`);
+            }
+            return row;
+        }
+
+        async function syncAdminAccounts(options = {}) {
             if (!currentUser || currentUser.role !== "admin") return;
             clearTimeout(adminAccountSyncTimer);
 
             // Student: ISN adalah username kanonis.
             ensureStudentLoginAccounts();
-            let studentDefault = String(state.studentStandardPassword || "Ipeka#2026");
-            if (studentDefault.length < 8) studentDefault = "Ipeka#2026";
-            state.studentStandardPassword = studentDefault;
-
+            // Password siswa tidak dibuat otomatis dengan nilai bawaan.
+            // Hanya password yang ditetapkan Administrator yang boleh dikirim ke Auth.
             const accounts = [];
             const skipped = [];
             (state.users || []).forEach(user => {
@@ -5575,22 +5741,26 @@ html, body { max-width:100%; overflow-x:hidden; }
                     }
                     user.isn = username;
                     user.username = username;
-                    if (String(user.password || "").length < 8) {
-                        user.password = studentDefault;
-                        user.passwordUpdatedAt = new Date().toISOString();
+                    // Jangan membuat/mengganti password secara diam-diam.
+                    // Akun tanpa password eksplisit harus menunggu Administrator menetapkannya.
+                    if (String(user.standardPassword || "").length < 8 && String(user.password || "").length >= 8) {
+                        user.standardPassword = user.password;
                     }
-                    if (String(user.standardPassword || "").length < 8) user.standardPassword = user.password;
                 }
 
-                const password = String(user.password || user.standardPassword || "");
-                if (password.length < 8) {
-                    skipped.push({ role, username, reason: "Password belum tersedia atau kurang dari 8 karakter. Administrator perlu Set / Reset Password." });
-                    return;
-                }
+                // Kirim juga profil tanpa password: Edge Function dapat memperbarui
+                // metadata untuk akun Auth yang sudah ada. Untuk akun baru, Edge Function
+                // akan meminta Administrator menetapkan password sebelum membuat Auth user.
+                const overrideKey = username.trim().toLowerCase();
+                const overridePassword = role === "student"
+                    ? String(options.studentPasswordOverride || options.passwordOverrides?.[overrideKey] || "")
+                    : String(options.passwordOverrides?.[overrideKey] || "");
+                const password = overridePassword || String(user.password || user.standardPassword || "");
 
                 const email = loginEmailFor(username, role);
                 accounts.push({
                     role, username, email, password,
+                    forcePasswordUpdate: Boolean(overridePassword && (role === "student" ? options.forceStudentPasswordUpdate !== false : true)),
                     passwordUpdatedAt: String(user.passwordUpdatedAt || (role === "student" ? user.createdAt || "" : "")),
                     name: String(user.name || ""),
                     isn: String(user.isn || user.ISN || ""),
@@ -5608,35 +5778,32 @@ html, body { max-width:100%; overflow-x:hidden; }
             if (!accounts.length) {
                 if (skipped.length) {
                     console.warn("Akun Teacher/Student belum dapat dikirim ke Supabase:", skipped);
-                    toast(`Tidak ada akun siap disinkronkan. ${skipped.length} akun perlu diperiksa; lihat Console.`);
+                    toast(`Tidak ada akun siap disinkronkan. ${skipped.length} akun perlu diperiksa; tetapkan password melalui menu Administrator.`);
                 }
                 return { ok: false, processed: 0, results: [], skipped };
             }
 
+            const hasExplicitPasswordOverride = Boolean(
+                options.studentPasswordOverride ||
+                (options.passwordOverrides && Object.keys(options.passwordOverrides).length)
+            );
             const fingerprint = JSON.stringify(accounts);
-            if (fingerprint === lastAdminAccountSyncFingerprint) return;
+            if (!hasExplicitPasswordOverride && fingerprint === lastAdminAccountSyncFingerprint) {
+                return {
+                    ok: true, unchanged: true, processed: accounts.length,
+                    results: accounts.map(account => ({
+                        role: account.role, username: account.username, status: "synced", unchanged: true
+                    })),
+                    skipped
+                };
+            }
 
-            const { data: sessionData, error: sessionError } = await ictSupabaseClient.auth.getSession();
-            if (sessionError) throw sessionError;
-            const token = sessionData?.session?.access_token;
-            if (!token) throw new Error("Sesi administrator tidak tersedia.");
-
-            const response = await fetch(`${window.ICT_SUPABASE_URL}/functions/v1/ict-sync-accounts`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${token}`,
-                    "apikey": window.ICT_SUPABASE_PUBLISHABLE_KEY
-                },
-                body: JSON.stringify({ accounts })
-            });
-            const result = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(result.error || `Sinkronisasi akun gagal (${response.status}).`);
+            const result = await callAdminAccountFunction({ accounts });
 
             const failed = (result.results || []).filter(item => item.status !== "synced");
-            // Cache only a fully successful request. Partial failures can be retried
-            // after correcting the relevant email/password in Data Master.
-            lastAdminAccountSyncFingerprint = failed.length ? "" : fingerprint;
+            // Cache only when every account was provisioned and no account was skipped.
+            // This allows Administrator to retry after fixing missing passwords or profile schema.
+            lastAdminAccountSyncFingerprint = (failed.length || skipped.length) ? "" : fingerprint;
             console.info("Supabase Auth account sync result:", { ...result, skipped });
 
             const syncedCount = (result.results || []).filter(item => item.status === "synced").length;
@@ -5651,6 +5818,23 @@ html, body { max-width:100%; overflow-x:hidden; }
             }
             return { ...result, skipped };
         }
+        async function deleteSupabaseManagedAccount(role, username) {
+            if (currentUser?.role !== "admin") throw new Error("Hanya Administrator yang dapat menghapus akun.");
+            const normalizedRole = normalizeLoginRole(role);
+            if (!["student", "teacher"].includes(normalizedRole)) throw new Error("Role akun tidak didukung untuk penghapusan.");
+            const cleanUsername = String(username || "").trim();
+            if (!cleanUsername) throw new Error("ISN/email akun kosong.");
+
+            const result = await callAdminAccountFunction({
+                deleteAccounts: [{ role: normalizedRole, username: cleanUsername }]
+            });
+            const deletion = result.deleted?.[0];
+            if (!deletion || !["deleted", "not_found"].includes(deletion.status)) {
+                throw new Error(deletion?.reason || "Supabase belum mengonfirmasi penghapusan akun.");
+            }
+            return deletion;
+        }
+
         function scheduleAdminAccountSync() {
             if (currentUser?.role !== "admin") return;
             clearTimeout(adminAccountSyncTimer);
@@ -5696,14 +5880,36 @@ html, body { max-width:100%; overflow-x:hidden; }
             return { local:true, server, reason:server ? "" : "supabase-sync-failed" };
         }
         function connectBackendRealtime() {
-            if (!backendAccessToken || supabaseChannel) return;
-            supabaseChannel = ictSupabaseClient.channel("ict-school-state", { config: { private: true } })
-                .on("broadcast", { event: "state_updated" }, async () => {
+            if (!backendAccessToken || supabaseChannel || !ictSupabaseClient) return;
+            // Listen to actual Postgres Changes events. The previous client listened
+            // only for a Broadcast event that was not emitted by the SQL RPC.
+            supabaseChannel = ictSupabaseClient.channel("ict-school-live-sync")
+                .on("postgres_changes", {
+                    event: "*", schema: "public", table: "ict_app_state"
+                }, async () => {
                     if (document.visibilityState === "visible") {
                         await refreshStateFromBackend(true);
                     }
                 })
-                .subscribe(status => console.info("Supabase Realtime:", status));
+                .on("postgres_changes", {
+                    event: "*", schema: "public", table: "ict_profiles"
+                }, async payload => {
+                    console.info("ICT account profile changed in Supabase:", payload.eventType);
+                    if (document.visibilityState === "visible" && currentUser?.role === "admin") {
+                        try {
+                            await refreshStateFromBackend(false);
+                            if (document.querySelector("#page-master:not(.hidden)")) renderMaster("students");
+                        } catch (error) {
+                            console.warn("Realtime profile refresh failed:", error);
+                        }
+                    }
+                })
+                .subscribe(status => {
+                    console.info("Supabase Realtime:", status);
+                    if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                        console.warn("Realtime belum aktif. Pastikan ict_app_state dan ict_profiles masuk publication supabase_realtime.");
+                    }
+                });
         }
         async function signOutSupabase() {
             if (supabaseChannel) { await ictSupabaseClient.removeChannel(supabaseChannel); supabaseChannel = null; }
@@ -6857,6 +7063,12 @@ html, body { max-width:100%; overflow-x:hidden; }
             }
 
             currentUser = found;
+            try {
+                await loadNormalizedAssessmentsFallback();
+            } catch (assessmentLoadError) {
+                console.warn("Normalized assessment fallback load failed:", assessmentLoadError);
+                toast(`Ujian dari tabel Supabase belum dapat dimuat: ${assessmentLoadError.message || assessmentLoadError}`);
+            }
 
             $("#loginError").textContent = "";
 
@@ -8308,7 +8520,10 @@ html, body { max-width:100%; overflow-x:hidden; }
         }
 
         function getStandardStudentPassword(user) {
-            return String(state?.studentStandardPassword || "Ipeka#2026");
+            // Tidak ada password siswa bawaan di frontend.
+            // Password harus ditetapkan Administrator melalui Student Account Registration
+            // atau Set / Reset Password, lalu diprovisikan ke Supabase Auth.
+            return String(state?.studentStandardPassword || "");
         }
 
         function getMasterStudentRows() {
@@ -8430,17 +8645,14 @@ html, body { max-width:100%; overflow-x:hidden; }
                         ${isStudent ? `
                             <div class="form-section" style="grid-column:1/-1">
                                 <h4>Student Account Registration</h4>
-                                <p class="muted">ISN seluruh siswa sudah diambil dari database Student Data. Administrator cukup menetapkan satu password standar yang sama untuk semua siswa, tanpa mendaftarkan ulang nama atau ISN.</p>
-                                <label>
-                                    Password Standar Seluruh Siswa
-                                    <input name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Masukkan password untuk semua siswa">
-                                </label>
-                                <small class="muted">Password ini akan diterapkan kepada seluruh akun siswa yang sudah terdaftar, dari semua jenjang. Reset per siswa tetap tersedia pada tabel akun.</small>
-                                <div class="form-end">
-                                    <button class="btn primary" type="submit">Terapkan / Update Password ke Semua Siswa</button>
-                                </div>
-                                <p id="bulkStudentPasswordStatus" class="muted" role="status" aria-live="polite">Belum ada perubahan password pada sesi ini.</p>
+                                <p class="muted">Administrator membuat satu akun siswa setiap kali registrasi. Username login siswa adalah ISN. Akun dan profil langsung disimpan ke Supabase.</p>
                             </div>
+                            <label>Nama Lengkap Siswa<input name="studentName" required placeholder="Nama lengkap sesuai Master Student"></label>
+                            <label>Username / ISN<input name="studentIsn" required autocomplete="off" placeholder="Masukkan ISN siswa"></label>
+                            <label>Jenjang<select name="studentLevel" required><option value="">Pilih jenjang</option><option>SD</option><option>SMP</option><option>SMA</option></select></label>
+                            <label>Kelas<input name="studentClass" required placeholder="Contoh: SMA-11.1"></label>
+                            <label>Password Siswa<input name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Minimal 8 karakter"><small class="muted">Minimal 8 karakter, wajib huruf besar, huruf kecil, dan angka.</small></label>
+                            <div class="form-end" style="grid-column:1/-1"><button class="btn primary" type="submit">Register Student Account</button></div>
                         ` : `
                             <label>Jenjang Registrasi Guru<select name="teacherLevel" id="teacherRegistrationLevel" required><option value="SD">SD</option><option value="SMP" selected>SMP</option><option value="SMA">SMA</option></select><small class="muted">Daftar guru dan pilihan kelas akan mengikuti jenjang yang dipilih.</small></label>
                             <label>Full Name<input name="name" required placeholder="Nama lengkap guru"></label>
@@ -8465,7 +8677,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
                                     <th>Username</th>
 
-                                    ${isStudent ? `<th>Login Password</th><th>Status Akun</th>` : ``}
+                                    ${isStudent ? `<th>Status Akun</th>` : ``}
 
                                     ${isStudent ? `
 
@@ -8511,8 +8723,7 @@ html, body { max-width:100%; overflow-x:hidden; }
 
 
                                         ${isStudent ? `
-                                            <td><span data-password-value>••••••••</span> <button type="button" class="btn secondary" data-reveal-password data-reveal-isn="${esc(user.isn || user.username)}"> Tampilkan </button></td>
-                                            <td><span class="badge success">✓ Akun aktif</span></td>
+                                            <td><span class="badge success">${user.authSynced === false ? "Belum tersinkron" : "✓ Akun dikelola Supabase"}</span></td>
                                             <td>
                                                 ${esc(user.isn)}
                                             </td>
@@ -8811,12 +9022,31 @@ html, body { max-width:100%; overflow-x:hidden; }
                             toast("File tidak dapat dibaca. Gunakan template Student_Registration_Template.xlsx.");
                         } finally { event.target.value=""; }
                     };
-                    $$("[data-delete-user]").forEach(button => button.onclick=()=>{
-                        const target=state.users.find(user=>user.username===button.dataset.deleteUser && user.role==="student");
-                        if(!target || !confirm(`Hapus akun siswa ${target.name || target.username}?`)) return;
-                        state.users=state.users.filter(user=>user!==target);
-                        resetExamDeviceLock(target);
-                        saveState(); renderMaster("students");
+                    $$("[data-delete-user]").forEach(button => button.onclick = async () => {
+                        const target = state.users.find(user =>
+                            user.role === "student" &&
+                            String(user.username || user.isn || "").trim().toLowerCase() === String(button.dataset.deleteUser || "").trim().toLowerCase()
+                        );
+                        if (!target) return toast("Akun siswa tidak ditemukan.");
+                        const isn = String(target.isn || target.username || "").trim();
+                        if (!confirm(`Hapus akun login siswa ${target.name || isn} (ISN ${isn}) dari Supabase Auth dan daftar Administrator? Data nilai/riwayat ujian tidak otomatis dihapus.`)) return;
+                        button.disabled = true;
+                        try {
+                            await deleteSupabaseManagedAccount("student", isn);
+                            state.users = state.users.filter(user => !(
+                                user.role === "student" &&
+                                String(user.isn || user.username || "").trim().toLowerCase() === isn.toLowerCase()
+                            ));
+                            resetExamDeviceLock(target);
+                            saveState();
+                            await syncStateToBackend();
+                            toast(`Akun login ISN ${isn} berhasil dihapus dari Supabase Auth dan daftar Administrator.`);
+                            renderMaster("students");
+                        } catch (error) {
+                            console.error("Student account deletion failed:", error);
+                            button.disabled = false;
+                            toast(`Akun belum dihapus. Supabase mengembalikan error: ${error.message || error}`);
+                        }
                     });
                     return;
                 }
@@ -8872,49 +9102,45 @@ html, body { max-width:100%; overflow-x:hidden; }
                     const form = event.currentTarget;
                     const data = Object.fromEntries(new FormData(form));
                     if (tab === "students") {
+                        const name = String(data.studentName || "").trim();
+                        const isn = String(data.studentIsn || "").trim();
+                        const level = normalizeLevel(data.studentLevel);
+                        const className = String(data.studentClass || "").trim();
                         const password = String(data.password || "");
+                        if (!name || !isn || !level || !className) return toast("Nama, ISN, jenjang, dan kelas wajib diisi.");
                         if (!validateAdminPassword(password)) return toast("Password minimal 8 karakter dan wajib mengandung huruf besar, huruf kecil, serta angka.");
-                        const studentAccounts = ensureStudentLoginAccounts();
-                        if (!studentAccounts.length) return toast("Tidak ada ISN pada Master Data Student. Pastikan data siswa sudah tersimpan di Student Registration / Student Data.");
-                        const masterRows = getMasterStudentRows();
-                        const accountCount = studentAccounts.length;
-                        if (!confirm(`Terapkan / update password baru untuk ${accountCount} akun siswa dari semua jenjang? Username ISN tidak akan diubah. Password lama setiap siswa akan diganti.`)) return;
-                        const timestamp = new Date().toISOString();
-                        state.studentStandardPassword = password;
-                        let updated = 0;
-                        studentAccounts.forEach(student => {
-                            const isn = String(student.isn || student.ISN || student.username || "").trim();
-                            if (!isn) return;
-                            student.role = "student"; student.isn = isn; student.username = isn;
-                            student.password = password; student.standardPassword = password;
-                            student.passwordUpdatedAt = timestamp; student.passwordUpdatedBy = "admin-bulk"; updated++;
-                        });
-                        const missing = masterRows.filter(row => !findStudentAccountByISN(row.isn));
-                        missing.forEach(row => {
-                            state.users.push({...row, role:"student", username:row.isn, password, standardPassword:password,
-                                passwordUpdatedAt:timestamp, passwordUpdatedBy:"admin-bulk"});
-                            updated++;
-                        });
-                        try { saveState(); } catch (error) {
-                            console.error("Bulk student password save failed:", error);
-                            return toast("Gagal menyimpan password siswa. Periksa kapasitas penyimpanan browser.");
-                        }
-                        renderStudentDataSubmenu("registration");
+                        const duplicate = (state.users || []).some(user =>
+                            user.role === "student" && String(user.isn || user.username || "").trim().toLowerCase() === isn.toLowerCase()
+                        );
+                        if (duplicate) return toast(`ISN ${isn} sudah terdaftar. Gunakan Set / Reset Password untuk akun yang sudah ada.`);
+                        if (!confirm(`Buat akun Student ${name}? Username login: ${isn}. Akun akan langsung dibuat di Supabase Auth.`)) return;
+                        const account = {
+                            id: crypto.randomUUID ? crypto.randomUUID() : `student-${Date.now()}`,
+                            role: "student", name, isn, username: isn, level, className,
+                            active: true, createdAt: new Date().toISOString(), authSynced: false
+                        };
                         try {
+                            await provisionSupabaseAccount({
+                                role: "student", username: isn,
+                                email: loginEmailFor(isn, "student"),
+                                password, forcePasswordUpdate: true,
+                                passwordUpdatedAt: new Date().toISOString(),
+                                name, isn, level, className, active: true
+                            });
+                            account.authSynced = true;
+                            state.users.push(account);
+                            saveState();
                             clearTimeout(backendSyncTimer);
                             const cloudSaved = await syncStateToBackend();
-                            if (!cloudSaved) throw new Error("Data Student belum berhasil disimpan ke Supabase Cloud.");
-                            const syncResult = await syncAdminAccounts();
-                            const failed = (syncResult?.results || []).filter(item => item.status !== "synced");
-                            const skipped = syncResult?.skipped || [];
-                            if (failed.length || skipped.length) {
-                                toast(`Password ${updated} akun tersimpan, tetapi ${failed.length + skipped.length} akun belum tersinkron. Periksa Console/Edge Function.`);
-                            } else {
-                                toast(`Password ${updated} akun siswa tersimpan dan sinkronisasi Supabase selesai.`);
-                            }
+                            if (!cloudSaved) throw new Error("Akun Auth dan ict_profiles sudah dibuat, tetapi snapshot website gagal disimpan ke Supabase. Periksa RPC ict_save_app_state.");
+                            connectBackendRealtime();
+                            renderMaster("students");
+                            form.reset();
+                            toast(`Student ${name} berhasil dibuat. Login siswa menggunakan ISN ${isn} dan password yang ditetapkan Administrator.`);
                         } catch (error) {
-                            console.error("Student bulk Auth sync failed:", error);
-                            toast(`Password tersimpan di data Administrator, tetapi sinkronisasi Auth gagal: ${error.message || error}`);
+                            console.error("Student account registration:", error);
+                            state.users = (state.users || []).filter(user => user !== account);
+                            toast(`Registrasi Student gagal: ${error.message || error}`);
                         }
                         return;
                     }
@@ -8951,17 +9177,14 @@ html, body { max-width:100%; overflow-x:hidden; }
                         id: (crypto.randomUUID ? crypto.randomUUID() : `teacher-${Date.now()}`),
                         role: "teacher",
                         createdAt: timestamp,
-                        password: String(data.password || ""),
-                        standardPassword: String(data.password || ""),
-                        passwordUpdatedAt: timestamp
+                        authSynced: false
                     };
-
-                    // Jika Administrator memasukkan password baru pada form edit,
-                    // tandai versinya agar Edge Function memperbarui password Auth.
-                    if (String(data.password || "").length >= 8 && String(data.password) !== String(account.password || "")) {
-                        account.password = String(data.password);
-                        account.standardPassword = String(data.password);
-                        account.passwordUpdatedAt = timestamp;
+                    const teacherPassword = String(data.password || "");
+                    if (!existing && !validateAdminPassword(teacherPassword)) {
+                        return toast("Password akun guru baru wajib minimal 8 karakter, mengandung huruf besar, huruf kecil, dan angka.");
+                    }
+                    if (teacherPassword && !validateAdminPassword(teacherPassword)) {
+                        return toast("Password minimal 8 karakter dan wajib mengandung huruf besar, huruf kecil, serta angka.");
                     }
 
                     // Identitas login tunggal dipertahankan; registrasi jenjang disimpan terpisah.
@@ -9003,43 +9226,63 @@ html, body { max-width:100%; overflow-x:hidden; }
                             active: true
                         });
                     });
-                    if (!existing) state.users.push(account);
                     try {
-                        saveState();
-                    } catch (error) {
-                        console.error("Teacher registration save failed:", error);
-                        if (!existing) state.users = state.users.filter(user => user !== account);
-                        return toast("Registrasi gagal disimpan. Periksa kapasitas penyimpanan browser.");
-                    }
-                    renderMaster("teachers");
-                    toast(existing
-                        ? `Registrasi ${name} pada jenjang ${teacherLevel} berhasil diperbarui.`
-                        : `Teacher ${name} berhasil didaftarkan pada ${teacherLevel}: ${subject} — ${selectedClasses.map(item => item.name || item.className).join(", ")}.`);
-                    if (currentUser?.role === "admin") {
-                        syncAdminAccounts().catch(error => {
-                            console.error("Teacher Auth provisioning:", error);
-                            toast(`Data Teacher tersimpan, tetapi akun Supabase belum tersinkron: ${error.message || error}`);
+                        await provisionSupabaseAccount({
+                            role: "teacher", username: normalizedEmail, email: normalizedEmail,
+                            password: teacherPassword,
+                            forcePasswordUpdate: Boolean(teacherPassword),
+                            passwordUpdatedAt: timestamp,
+                            name, level: teacherLevel, className: selectedClasses.map(item => item.name || item.className).join(", "),
+                            active: true
                         });
+                        account.authSynced = true;
+                        if (!existing) state.users.push(account);
+                        // Do not store plaintext password in browser storage or app snapshot.
+                        delete account.password;
+                        delete account.standardPassword;
+                        saveState();
+                        clearTimeout(backendSyncTimer);
+                        const cloudSaved = await syncStateToBackend();
+                        if (!cloudSaved) throw new Error("Akun Auth dan ict_profiles sudah dibuat, tetapi snapshot website gagal disimpan ke Supabase. Periksa RPC ict_save_app_state.");
+                        connectBackendRealtime();
+                        renderMaster("teachers");
+                        form.reset();
+                        toast(existing
+                            ? `Profil Teacher ${name} berhasil diperbarui di Supabase.`
+                            : `Teacher ${name} berhasil dibuat di Supabase Auth dan Database.`);
+                    } catch (error) {
+                        console.error("Teacher registration failed:", error);
+                        if (!existing) state.users = state.users.filter(user => user !== account);
+                        toast(`Registrasi Teacher gagal: ${error.message || error}`);
                     }
                 };
 
 
                 $$("[data-delete-user]").forEach(button => {
-
-                    button.onclick = () => {
-
-                        const target = state.users.find(user => user.username === button.dataset.deleteUser && user.role === tab.slice(0,-1));
-                        if (!target || !confirm(`Hapus akun ${target.name || target.username}?`)) return;
-                        state.users = state.users.filter(user => user !== target);
-                        if (target.role === "student") resetExamDeviceLock(target);
-
-
-                        saveState();
-
-                        renderMaster(tab);
-
+                    button.onclick = async () => {
+                        const role = tab.slice(0, -1);
+                        const target = state.users.find(user =>
+                            user.role === role &&
+                            String(user.username || user.isn || "").trim().toLowerCase() === String(button.dataset.deleteUser || "").trim().toLowerCase()
+                        );
+                        if (!target || !confirm(`Hapus akun ${target.name || target.username}? Akun Auth Supabase juga akan dihapus.`)) return;
+                        button.disabled = true;
+                        try {
+                            if (["student", "teacher"].includes(role)) {
+                                await deleteSupabaseManagedAccount(role, role === "student" ? (target.isn || target.username) : target.username);
+                            }
+                            state.users = state.users.filter(user => user !== target);
+                            if (target.role === "student") resetExamDeviceLock(target);
+                            saveState();
+                            await syncStateToBackend();
+                            renderMaster(tab);
+                            toast(`Akun ${target.name || target.username} berhasil dihapus dari Supabase Auth dan data Administrator.`);
+                        } catch (error) {
+                            console.error("Account deletion failed:", error);
+                            button.disabled = false;
+                            toast(`Akun belum dihapus: ${error.message || error}`);
+                        }
                     };
-
                 });
                 $$('[data-reset-account-password]').forEach(button => button.onclick = () => {
                     const role = button.dataset.accountRole;
@@ -9058,20 +9301,46 @@ html, body { max-width:100%; overflow-x:hidden; }
                     if (confirmation === null) return;
                     if (confirmation !== newPassword) return toast("Konfirmasi password tidak sama. Password belum diubah.");
                     // Hanya password yang diubah. Identitas login (ISN/email/username) dipertahankan.
-                    target.password = newPassword;
-                    target.standardPassword = newPassword;
                     if (role === "student") {
                         target.isn = String(target.isn || target.username || identity).trim();
                         target.username = target.isn;
+                        // Do not keep the student's plaintext password in browser storage.
+                        delete target.password;
+                        delete target.standardPassword;
                     } else if (role === "teacher") {
                         target.username = String(target.username || target.email || identity).trim();
                         target.email = target.username;
+                        delete target.password;
+                        delete target.standardPassword;
                     }
                     target.passwordUpdatedAt = new Date().toISOString();
                     target.passwordUpdatedBy = "admin";
                     saveState();
-                    toast(`Password ${target.name || identity} berhasil diperbarui. Username/ISN dan email tetap dipertahankan.`);
                     renderMaster(tab);
+                    (async () => {
+                        try {
+                            clearTimeout(backendSyncTimer);
+                            const cloudSaved = await syncStateToBackend();
+                            if (!cloudSaved) throw new Error("Data profil belum berhasil disimpan ke Supabase.");
+                            const options = role === "student"
+                                ? { passwordOverrides: { [identity.trim().toLowerCase()]: newPassword } }
+                                : {};
+                            const syncResult = await syncAdminAccounts(options);
+                            const row = (syncResult?.results || []).find(item =>
+                                String(item.username || "").trim().toLowerCase() === identity.trim().toLowerCase()
+                            );
+                            if (!row || row.status !== "synced") {
+                                throw new Error(row?.reason || `Akun ${identity} belum dikonfirmasi Supabase Auth.`);
+                            }
+                            if (syncResult?.skipped?.some(item =>
+                                String(item.username || "").trim().toLowerCase() === identity.trim().toLowerCase()
+                            )) throw new Error("Akun dilewati. Periksa ISN/email dan Edge Function.");
+                            toast(`Password ${target.name || identity} berhasil diperbarui di Supabase Auth. Username/ISN tetap.`);
+                        } catch (error) {
+                            console.error("Account password provisioning failed:", error);
+                            toast(`Supabase Auth belum mengonfirmasi perubahan password: ${error.message || error}. Ulangi Set / Reset Password.`);
+                        }
+                    })();
                 });
 
             }
@@ -12241,7 +12510,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                 $("#loginError").textContent = "";
                 $("#loginUsername").value = "";
                 $("#loginPassword").value = "";
-                $("#loginUsername").placeholder = selectedLoginRole === "student" ? "Masukkan username / ISN siswa" : selectedLoginRole === "teacher" ? "Masukkan username guru" : "Masukkan username Administrator";
+                $("#loginUsername").placeholder = selectedLoginRole === "student" ? "Masukkan username / ISN siswa" : selectedLoginRole === "teacher" ? "Masukkan email sekolah guru" : "Masukkan email Auth Administrator";
             });
         });
 
@@ -12879,6 +13148,18 @@ html, body { max-width:100%; overflow-x:hidden; }
                     await signOutSupabase();
                     return;
                 }
+                if (role === "admin") {
+                    const expectedEmail = String(ADMIN.authEmail || "").trim().toLowerCase();
+                    const actualEmail = String(authUser.email || "").trim().toLowerCase();
+                    const metaUsername = String(appMeta.username || "").trim().toLowerCase();
+                    if (!authUser.email_confirmed_at || actualEmail !== expectedEmail ||
+                        metaUsername !== expectedEmail || appMeta.active !== true) {
+                        await signOutSupabase();
+                        localStorage.removeItem(SESSION_KEY);
+                        console.warn("Sesi Administrator ditolak: email confirmation atau app_metadata tidak sesuai.");
+                        return;
+                    }
+                }
                 const username = String(meta.username || appMeta.username || authUser.email || "").trim();
                 let found = (state.users || []).find(user =>
                     String(user.role || "").toLowerCase() === role &&
@@ -12901,13 +13182,52 @@ html, body { max-width:100%; overflow-x:hidden; }
                     currentUser.isn = currentUser.username;
                     currentUser = syncStudentAccountFromMaster(currentUser);
                 }
+                try { await loadNormalizedAssessmentsFallback(); }
+                catch (assessmentLoadError) {
+                    console.warn("Normalized assessment fallback load failed during session restore:", assessmentLoadError);
+                }
                 showApp();
                 connectBackendRealtime();
             } catch (error) {
                 console.warn("Supabase session restore failed:", error);
-                await signOutSupabase();
+                if (ictSupabaseClient?.auth) {
+                    try { await signOutSupabase(); } catch (signOutError) {
+                        console.warn("Supabase sign-out cleanup failed:", signOutError);
+                    }
+                }
             }
         }
+
+        // Visible startup diagnostics: avoid a blank/dead login page when a CDN,
+        // JavaScript runtime, or initial Supabase configuration fails.
+        function showICTStartupDiagnostic(message, isError = true) {
+            let panel = document.getElementById("ictStartupDiagnostic");
+            if (!panel) {
+                panel = document.createElement("div");
+                panel.id = "ictStartupDiagnostic";
+                panel.setAttribute("role", "status");
+                panel.style.cssText = "position:fixed;z-index:99999;left:12px;right:12px;bottom:12px;padding:12px 16px;border-radius:10px;font:14px/1.45 Arial,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.18);";
+                document.body.appendChild(panel);
+            }
+            panel.style.background = isError ? "#fff1f0" : "#ecfdf3";
+            panel.style.color = isError ? "#8a1c13" : "#166534";
+            panel.textContent = message;
+            panel.hidden = !message;
+        }
+        if (window.__ICT_SUPABASE_INIT_ERROR) {
+            showICTStartupDiagnostic("Supabase belum siap: " + window.__ICT_SUPABASE_INIT_ERROR + " Muat ulang halaman setelah koneksi/CDN pulih.");
+        }
+        window.addEventListener("error", event => {
+            const message = event?.message || "Terjadi kesalahan JavaScript.";
+            console.error("ICT runtime error:", event.error || message);
+            showICTStartupDiagnostic("Kesalahan aplikasi: " + message + " Buka Developer Tools → Console untuk detail.");
+        });
+        window.addEventListener("unhandledrejection", event => {
+            const reason = event?.reason?.message || String(event?.reason || "Promise gagal.");
+            console.error("ICT unhandled rejection:", event.reason);
+            showICTStartupDiagnostic("Proses aplikasi gagal: " + reason + " Periksa Console dan Supabase Edge Function Logs.");
+        });
+
         applyTheme();
         restoreSupabaseSession();
 
