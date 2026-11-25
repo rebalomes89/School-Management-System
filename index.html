@@ -3748,8 +3748,17 @@ html, body { max-width:100%; overflow-x:hidden; }
 
 
 <body>
-<!-- GANTI URL backend di bawah dengan URL HTTPS Flask API yang sudah aktif. -->
-<script>window.ICT_API_URL = window.ICT_API_URL || "https://GANTI-NAMA-SERVICE.onrender.com"; window.ICT_REQUIRE_LOCAL_SERVER = true;</script>
+<!-- Supabase configuration is loaded below. No Flask backend is used. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  window.ICT_SUPABASE_URL = "https://yiwpryvisnqruvgeazzo.supabase.co";
+  window.ICT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_sJHtQhwf54mCkh6UuWfVmA_NCY6jgXJ";
+  window.ictSupabase = window.supabase.createClient(
+    window.ICT_SUPABASE_URL,
+    window.ICT_SUPABASE_PUBLISHABLE_KEY,
+    { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }
+  );
+</script>
 
 
     <!-- =====================================================
@@ -5338,163 +5347,217 @@ html, body { max-width:100%; overflow-x:hidden; }
            ===================================================== */
 
 
-        // Flask backend bridge. Local storage remains an offline cache.
-        // GitHub Pages MUST point to the public HTTPS URL of the Flask API on cPanel.
-        // Example: window.ICT_API_URL = "https://api.your-domain.com";
-        const API_URL = String(window.ICT_API_URL || "").trim().replace(/\/$/, "");
-        const API_TOKEN_KEY = "ict_backend_access_token";
-        let backendAccessToken = localStorage.getItem(API_TOKEN_KEY) || "";
-        let backendSyncTimer = null, backendSocket = null, backendSyncInProgress = false, backendSyncQueued = false;
+        /* =====================================================
+           SUPABASE AUTH + DATABASE BRIDGE
+           Existing UI/state modules are retained. No service-role
+           credentials are used in this browser file.
+           ===================================================== */
+        const ictSupabaseClient = window.ictSupabase;
+        const API_TOKEN_KEY = "ict_supabase_session_marker";
+        let backendAccessToken = "";
+        let backendSyncTimer = null, backendSyncInProgress = false, backendSyncQueued = false;
+        let supabaseChannel = null;
+        let cloudStateReady = false;
+        let adminAccountSyncTimer = null;
+        let lastAdminAccountSyncFingerprint = "";
 
-        async function backendRequest(path, options = {}) {
-            if (!API_URL) throw new Error("Alamat backend belum diatur. Isi window.ICT_API_URL dengan URL Flask cPanel HTTPS.");
-            if (location.protocol === "https:" && API_URL.startsWith("http://")) throw new Error("Backend harus menggunakan HTTPS karena frontend GitHub Pages berjalan melalui HTTPS.");
-            const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-            if (backendAccessToken) headers.Authorization = `Bearer ${backendAccessToken}`;
-            const response = await fetch(`${API_URL}${path}`, { ...options, headers });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(payload.message || `Backend error ${response.status}`);
-            return payload;
+        function base64UrlUtf8(value) {
+            const bytes = new TextEncoder().encode(String(value || "").trim().toLowerCase());
+            let binary = "";
+            bytes.forEach(byte => binary += String.fromCharCode(byte));
+            return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+        }
+        function loginEmailFor(username, role) {
+            const clean = String(username || "").trim();
+            if (role === "teacher") return clean.toLowerCase();
+            const prefix = role === "admin" ? "admin" : "student";
+            return `${prefix}-${base64UrlUtf8(clean)}@ict-school.example.com`;
+        }
+        function safeCloudState(source) {
+            const copy = JSON.parse(JSON.stringify(source || {}));
+            // Passwords must never be stored in the shared cloud application snapshot.
+            if (Array.isArray(copy.users)) {
+                copy.users = copy.users.map(user => {
+                    const clean = { ...user };
+                    delete clean.password;
+                    delete clean.standardPassword;
+                    delete clean.passwordResetToken;
+                    return clean;
+                });
+            }
+            return copy;
         }
         function mergeBackendState(localState, remoteState) {
             if (!remoteState || typeof remoteState !== "object") return localState;
             const merged = { ...(localState || {}), ...remoteState };
-            ["users","classes","subjects","periods","students","studentData","assignments","plotting","submissions","violations","notifications","scorelistTPs"].forEach(k => {
-                if (Array.isArray(remoteState[k])) merged[k] = remoteState[k];
+            const arrayKeys = [
+                "users","classes","subjects","periods","students","studentData",
+                "assignments","plotting","submissions","violations","notifications",
+                "scorelistTPs"
+            ];
+            arrayKeys.forEach(key => {
+                if (Array.isArray(remoteState[key])) {
+                    if (key === "users") {
+                        const localUsers = Array.isArray(localState?.users) ? localState.users : [];
+                        const byKey = new Map();
+                        [...remoteState.users, ...localUsers].forEach(user => {
+                            if (!user || typeof user !== "object") return;
+                            const keyValue = String(user.username || user.email || user.isn || user.ISN || "").trim().toLowerCase();
+                            if (!keyValue) return;
+                            byKey.set(`${String(user.role || "").toLowerCase()}::${keyValue}`,
+                                { ...(byKey.get(`${String(user.role || "").toLowerCase()}::${keyValue}`) || {}), ...user });
+                        });
+                        merged.users = [...byKey.values()];
+                    } else merged[key] = remoteState[key];
+                }
             });
             if (remoteState.scorelistMarks) merged.scorelistMarks = { ...(localState?.scorelistMarks || {}), ...remoteState.scorelistMarks };
             return merged;
         }
-        async function backendLogin(username, password, role) {
-            // Hapus token sesi lama agar request login tidak membawa kredensial kedaluwarsa.
-            backendAccessToken = "";
-            localStorage.removeItem(API_TOKEN_KEY);
-            const result = await backendRequest("/api/auth/login", {
-                method:"POST",
-                headers:{"Authorization":""},
-                body:JSON.stringify({username,password,role})
-            });
-            if (!result?.access_token || !result?.user) {
-                throw new Error("Respons autentikasi server tidak lengkap.");
+        async function supabaseLogin(username, password, role) {
+            const email = loginEmailFor(username, role);
+            const { data, error } = await ictSupabaseClient.auth.signInWithPassword({ email, password });
+            if (error) throw error;
+            if (!data?.user || !data?.session) throw new Error("Supabase tidak mengembalikan sesi login.");
+            backendAccessToken = data.session.access_token;
+            localStorage.setItem(API_TOKEN_KEY, "supabase-auth");
+            const meta = data.user.app_metadata || {};
+            const userMeta = data.user.user_metadata || {};
+            const actualRole = String(meta.role || userMeta.role || role || "").toLowerCase();
+            if (actualRole !== String(role).toLowerCase()) {
+                await ictSupabaseClient.auth.signOut();
+                throw new Error("Peran akun tidak sesuai dengan tombol login yang dipilih.");
             }
-            backendAccessToken = result.access_token;
-            localStorage.setItem(API_TOKEN_KEY, backendAccessToken);
-            if (result.state) {
-                const localUsers = Array.isArray(state?.users) ? state.users : [];
-                state = mergeBackendState(state, result.state);
-                // Keep legacy accounts stored in this browser until Admin syncs them
-                // into the central database for the first time.
-                if (String(result.user.role || "").toLowerCase() === "admin") {
-                    const mergedUsers = new Map();
-                    [...(result.state.users || []), ...localUsers].forEach(user => {
-                        if (!user || typeof user !== "object") return;
-                        const key = String(user.username || user.email || user.isn || user.ISN || "").trim().toLowerCase();
-                        if (!key) return;
-                        // Do not replace server's hashed admin credential with browser legacy data.
-                        if (String(user.role || "").toLowerCase() === "admin" && mergedUsers.has(key)) return;
-                        mergedUsers.set(key, { ...(mergedUsers.get(key) || {}), ...user });
-                    });
-                    state.users = [...mergedUsers.values()];
+            return {
+                id: data.user.id,
+                authUserId: data.user.id,
+                email: data.user.email,
+                role: actualRole,
+                username: String(userMeta.username || meta.username || username).trim(),
+                isn: String(userMeta.isn || meta.isn || (role === "student" ? username : "")).trim(),
+                name: String(userMeta.name || meta.name || username).trim(),
+                level: userMeta.level || meta.level || "",
+                className: userMeta.className || meta.className || "",
+                major: userMeta.major || meta.major || "",
+                active: userMeta.active !== false && meta.active !== false
+            };
+        }
+        async function refreshStateFromBackend(render = false) {
+            const { data, error } = await ictSupabaseClient.rpc("ict_load_app_state");
+            if (error) {
+                console.error("Supabase load state:", error);
+                return false;
+            }
+            const remote = data && typeof data === "object" ? data : {};
+            const hasRemoteData = Object.keys(remote).length > 0;
+            if (hasRemoteData) {
+                state = mergeBackendState(state, remote);
+                cloudStateReady = true;
+                try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) { console.warn(e); }
+                if (render && currentUser) {
+                    const page = document.querySelector(".page:not(.hidden)")?.id?.replace(/^page-/,"");
+                    if (page === "student") renderStudentAssignments();
+                    else if (page === "classwork") renderClasswork();
+                    else if (page === "monitoring") renderMonitoring();
+                    else if (page === "dashboard") renderDashboard();
                 }
-                localStorage.setItem(STORE, JSON.stringify(state));
             }
-            connectBackendRealtime();
-            // Admin can migrate locally stored users and records after successful authentication.
-            if (String(result.user.role || "").toLowerCase() === "admin") {
-                setTimeout(() => syncStateToBackend().catch(err => console.warn("Initial admin sync:", err)), 300);
-            }
-            const normalizedUser = { ...result.user };
-            normalizedUser.role = String(normalizedUser.role || role || "").toLowerCase();
-            normalizedUser.username = String(normalizedUser.username || normalizedUser.email || normalizedUser.isn || normalizedUser.ISN || username).trim();
-            if (normalizedUser.role === "student") {
-                normalizedUser.isn = String(normalizedUser.isn || normalizedUser.ISN || normalizedUser.username).trim();
-                normalizedUser.username = normalizedUser.isn;
-            }
-            return normalizedUser;
+            return true;
+        }
+        async function syncAdminAccounts() {
+            if (!currentUser || currentUser.role !== "admin") return;
+            const accounts = (state.users || [])
+                .filter(user => ["teacher","student"].includes(String(user.role || "").toLowerCase()))
+                .filter(user => String(user.password || "").length >= 8)
+                .map(user => ({
+                    role: String(user.role).toLowerCase(),
+                    username: String(user.username || user.email || user.isn || "").trim(),
+                    email: loginEmailFor(user.username || user.email || user.isn, String(user.role).toLowerCase()),
+                    password: String(user.password),
+                    name: String(user.name || ""),
+                    isn: String(user.isn || ""),
+                    level: String(user.level || ""),
+                    className: String(user.className || ""),
+                    major: String(user.major || ""),
+                    active: user.active !== false
+                }));
+            if (!accounts.length) return;
+            const fingerprint = JSON.stringify(accounts);
+            if (fingerprint === lastAdminAccountSyncFingerprint) return;
+            const { data: sessionData } = await ictSupabaseClient.auth.getSession();
+            const token = sessionData?.session?.access_token;
+            if (!token) throw new Error("Sesi administrator tidak tersedia.");
+            const response = await fetch(`${window.ICT_SUPABASE_URL}/functions/v1/ict-sync-accounts`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`,
+                    "apikey": window.ICT_SUPABASE_PUBLISHABLE_KEY
+                },
+                body: JSON.stringify({ accounts })
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error || `Sinkronisasi akun gagal (${response.status}).`);
+            lastAdminAccountSyncFingerprint = fingerprint;
+            console.info("Supabase Auth accounts synchronized:", result);
+        }
+        function scheduleAdminAccountSync() {
+            if (currentUser?.role !== "admin") return;
+            clearTimeout(adminAccountSyncTimer);
+            adminAccountSyncTimer = setTimeout(() => {
+                syncAdminAccounts().catch(err => console.warn("Sinkronisasi akun Auth:", err));
+            }, 1800);
         }
         function scheduleBackendSync() {
-            if (!API_URL || !backendAccessToken) return;
+            if (!ictSupabaseClient || !backendAccessToken) return;
             clearTimeout(backendSyncTimer);
-            backendSyncTimer = setTimeout(syncStateToBackend, 500);
+            backendSyncTimer = setTimeout(() => syncStateToBackend().catch(err => console.warn("Supabase sync:", err)), 700);
         }
         async function syncStateToBackend() {
-            if (!API_URL || !backendAccessToken) return false;
+            if (!backendAccessToken) return false;
             if (backendSyncInProgress) {
                 backendSyncQueued = true;
-                // Wait briefly for the active request to finish, then send the newest snapshot.
-                for (let attempt = 0; attempt < 40 && backendSyncInProgress; attempt++) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                }
-                if (backendSyncInProgress) return false;
+                return false;
             }
             backendSyncInProgress = true;
             let synced = false;
             try {
-                await backendRequest("/api/state", { method:"PUT", body:JSON.stringify({state}) });
+                const { error } = await ictSupabaseClient.rpc("ict_save_app_state", { p_state: safeCloudState(state) });
+                if (error) throw error;
                 synced = true;
-            } catch (e) {
-                console.warn("Backend sync failed; local cache remains available.", e);
+            } catch (error) {
+                console.error("Supabase save state failed:", error);
             } finally {
                 backendSyncInProgress = false;
                 if (backendSyncQueued) {
                     backendSyncQueued = false;
-                    // The next call sends the latest state rather than relying only on a timer.
-                    if (!synced) scheduleBackendSync();
+                    scheduleBackendSync();
                 }
             }
             return synced;
         }
         async function persistStateNow() {
-            // Always write to this browser first. The Flask server is the next persistence layer.
-            try {
-                localStorage.setItem(STORE, JSON.stringify(state));
-            } catch (error) {
-                console.error("Local storage write failed:", error);
-                return { local:false, server:false };
-            }
-            if (!API_URL || !backendAccessToken) return { local:true, server:false, reason:"no-backend-session" };
+            try { localStorage.setItem(STORE, JSON.stringify(state)); }
+            catch (error) { console.error("Local storage write failed:", error); return { local:false, server:false }; }
             const server = await syncStateToBackend();
-            return { local:true, server, reason:server ? "" : "server-sync-failed" };
+            return { local:true, server, reason:server ? "" : "supabase-sync-failed" };
         }
-        async function refreshStateFromBackend(render = false) {
-            if (!API_URL || !backendAccessToken) return false;
-            try {
-                const result = await backendRequest("/api/state");
-                if (result.state) {
-                    state = mergeBackendState(state, result.state);
-                    localStorage.setItem(STORE, JSON.stringify(state));
-                    if (render && currentUser) {
-                        const page = document.querySelector(".page:not(.hidden)")?.id?.replace(/^page-/,"");
-                        if (page === "student") renderStudentAssignments();
-                        else if (page === "classwork") renderClasswork();
-                        else if (page === "monitoring") renderMonitoring();
-                        else if (page === "dashboard") renderDashboard();
-                    }
-                }
-                return true;
-            } catch (e) { console.warn("Backend state fetch failed:", e); return false; }
-        }
-        let backendPollingTimer = null;
         function connectBackendRealtime() {
-            if (!API_URL || !backendAccessToken) return;
-            // cPanel Passenger commonly serves WSGI/HTTP requests, not persistent WebSocket.
-            // Polling the authenticated REST API keeps multiple browser sessions refreshed.
-            if (backendPollingTimer) clearInterval(backendPollingTimer);
-            backendPollingTimer = setInterval(() => {
-                if (document.visibilityState === "visible" && navigator.onLine) {
-                    refreshStateFromBackend(true);
-                }
-            }, 5000);
-            // Optional Socket.IO connection for servers that explicitly support it.
-            if (!backendSocket && window.io) {
-                try {
-                    backendSocket = window.io(API_URL, { auth:{token:backendAccessToken}, transports:["websocket","polling"] });
-                    backendSocket.on("state_updated", () => refreshStateFromBackend(true));
-                    backendSocket.on("connect_error", e => console.warn("Socket.IO unavailable; REST polling remains active.", e.message));
-                } catch (e) {
-                    console.warn("Socket.IO unavailable; REST polling remains active.", e);
-                }
-            }
+            if (!backendAccessToken || supabaseChannel) return;
+            supabaseChannel = ictSupabaseClient.channel("ict-school-state", { config: { private: true } })
+                .on("broadcast", { event: "state_updated" }, async () => {
+                    if (document.visibilityState === "visible") {
+                        await refreshStateFromBackend(true);
+                    }
+                })
+                .subscribe(status => console.info("Supabase Realtime:", status));
+        }
+        async function signOutSupabase() {
+            if (supabaseChannel) { await ictSupabaseClient.removeChannel(supabaseChannel); supabaseChannel = null; }
+            await ictSupabaseClient.auth.signOut();
+            backendAccessToken = "";
+            cloudStateReady = false;
+            localStorage.removeItem(API_TOKEN_KEY);
         }
 
         const STORE = "ict_school_management_v1";
@@ -5758,6 +5821,7 @@ html, body { max-width:100%; overflow-x:hidden; }
         function saveState() {
             localStorage.setItem(STORE, JSON.stringify(state));
             scheduleBackendSync();
+            scheduleAdminAccountSync();
         }
 
 
@@ -6521,35 +6585,36 @@ html, body { max-width:100%; overflow-x:hidden; }
             const normalizedLoginName = username.trim().toLowerCase();
             // Student: username selalu ISN; Teacher: email sekolah; Admin: username admin.
             // Password dibandingkan persis (case-sensitive), tanpa trim agar spasi password tetap sah.
-            let backendUser = null;
-            if (API_URL) {
-                if (/GANTI-DOMAIN-ANDA|GANTI-NAMA-SERVICE|YOUR-USERNAME|example\\.com/i.test(API_URL)) {
-                    $("#loginError").textContent = "Alamat backend belum dikonfigurasi. Ganti window.ICT_API_URL dengan URL HTTPS API Render Anda.";
-                    return;
+            let authenticatedUser = null;
+            try {
+                authenticatedUser = await supabaseLogin(username, password, selectedLoginRole);
+                await refreshStateFromBackend(false);
+                if (selectedLoginRole === "admin") {
+                    // On first migration only, seed the cloud snapshot from this administrator's
+                    // existing local data; subsequent sessions load the central snapshot.
+                    if (!cloudStateReady) {
+                        const seeded = await syncStateToBackend();
+                        if (!seeded) throw new Error("Data awal belum berhasil dikirim ke Supabase.");
+                        cloudStateReady = true;
+                    }
                 }
-                try {
-                    backendUser = await backendLogin(username, password, selectedLoginRole);
-                    await refreshStateFromBackend(false);
-                } catch (error) {
-                    console.error("Backend login failed:", error);
-                    const detail = String(error?.message || "");
-                    $("#loginError").textContent = detail
-                        ? `Login server gagal: ${detail}`
-                        : "Login server gagal. Periksa URL API Render, SSL, koneksi PostgreSQL, CORS, dan akun.";
-                    return;
-                }
-            } else if (window.ICT_REQUIRE_LOCAL_SERVER) {
-                $("#loginError").textContent = "Alamat backend Render belum dikonfigurasi.";
+            } catch (error) {
+                console.error("Supabase login failed:", error);
+                const detail = String(error?.message || "");
+                $("#loginError").textContent = detail
+                    ? `Login Supabase gagal: ${detail}`
+                    : "Login gagal. Periksa akun, password, dan konfigurasi Supabase.";
                 return;
             }
-            let found = backendUser || (state.users || []).find(user => {
+            let found = (state.users || []).find(user => {
                 if (String(user.role || "").toLowerCase() !== String(selectedLoginRole || "").toLowerCase()) return false;
                 const accountName = String(user.role || "").toLowerCase() === "student"
                     ? String(user.isn || user.ISN || user.username || "").trim()
                     : String(user.username || user.email || "").trim();
-                const storedPassword = String(user.password ?? "");
-                return accountName.toLowerCase() === normalizedLoginName && storedPassword === password;
-            });
+                return accountName.toLowerCase() === normalizedLoginName;
+            }) || authenticatedUser;
+            found = { ...found, ...authenticatedUser };
+            if (selectedLoginRole === "admin" && !found.username) found.username = username;
             if (found) found.role = String(found.role || selectedLoginRole || "").toLowerCase();
             if (found?.role === "student") {
                 // Gunakan record akun yang sama dengan Master Data dan pastikan
@@ -6638,6 +6703,8 @@ html, body { max-width:100%; overflow-x:hidden; }
             }
 
             showApp();
+            if (currentUser?.role === "admin") syncAdminAccounts().catch(err => console.warn("Sync akun Supabase:", err));
+            connectBackendRealtime();
             } catch (error) {
                 console.error("Login handler error:", error);
                 const errorBox = $("#loginError");
@@ -6653,9 +6720,7 @@ html, body { max-width:100%; overflow-x:hidden; }
             closeSidebar();
 
             currentUser = null;
-            if (backendSocket) { backendSocket.disconnect(); backendSocket = null; }
-            backendAccessToken = "";
-            localStorage.removeItem(API_TOKEN_KEY);
+            signOutSupabase().catch(error => console.warn("Supabase logout:", error));
 
             // Logout eksplisit mengakhiri sesi; reload setelah logout akan kembali ke login.
             localStorage.removeItem(SESSION_KEY);
@@ -10881,7 +10946,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                 <small class="muted">Jika lupa password, hubungi Administrator untuk reset ke password standar.</small>
             </section>`;
             const passwordForm = $("#studentChangePasswordForm");
-            passwordForm.onsubmit = event => {
+            passwordForm.onsubmit = async event => {
                 event.preventDefault();
                 const data = Object.fromEntries(new FormData(passwordForm));
                 const message = $("#studentPasswordMessage");
@@ -10898,8 +10963,10 @@ html, body { max-width:100%; overflow-x:hidden; }
                     message.textContent = "Konfirmasi password baru tidak sama.";
                     return;
                 }
-                liveUser.password = data.newPassword;
-                currentUser.password = data.newPassword;
+                const { error: passwordError } = await ictSupabaseClient.auth.updateUser({ password: data.newPassword });
+                if (passwordError) { message.textContent = `Password gagal diperbarui: ${passwordError.message}`; return; }
+                liveUser.password = "";
+                currentUser.password = "";
                 saveState();
                 passwordForm.reset();
                 message.style.color = "#15803d";
@@ -11208,7 +11275,7 @@ html, body { max-width:100%; overflow-x:hidden; }
             const studentQuestionSet = getStudentQuestionOrder(assignment);
 
             // Per-question draft progress is stored in the same submission record.
-            // localStorage is updated immediately; local Flask server sync is debounced.
+            // localStorage is updated immediately; Supabase cloud sync is debounced.
             let questionDraftSyncTimer = null;
             let questionDraftSyncBusy = false;
             const currentStudentSubmission = liveSubmission;
@@ -11271,7 +11338,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                 currentStudentSubmission.submissionStatus = "draft";
                 // Immediate browser persistence; never wait for the network to protect the draft.
                 saveState();
-                if (syncServer && API_URL && backendAccessToken && !questionDraftSyncBusy) {
+                if (syncServer && backendAccessToken && !questionDraftSyncBusy) {
                     questionDraftSyncBusy = true;
                     try {
                         const result = await persistStateNow();
@@ -11760,7 +11827,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                     return;
                 }
 
-                // Flush the final submission to the local Flask server before showing the result.
+                // Flush the final submission to the local Supabase server before showing the result.
                 const persistence = await persistStateNow();
                 if (!persistence.local) {
                     submissionProcessing = false;
@@ -12254,7 +12321,7 @@ html, body { max-width:100%; overflow-x:hidden; }
                 assignmentSettingsPanel.classList.toggle("hidden", !settingsTab);
                 if (selected === "responses") {
                     // Pull the latest shared server data before rendering teacher responses.
-                    if (API_URL && backendAccessToken) refreshStateFromBackend(false).then(() => {
+                    if (backendAccessToken) refreshStateFromBackend(false).then(() => {
                         const activeTab = document.querySelector('.gform-editor-tab[data-gform-tab="responses"]');
                         if (activeTab && activeTab.classList.contains("active")) activeTab.click();
                     });
@@ -12555,15 +12622,52 @@ html, body { max-width:100%; overflow-x:hidden; }
             }
         });
 
-        applyTheme();
-        (async () => {
-            if (API_URL && backendAccessToken) {
-                const ok = await refreshStateFromBackend(false);
-                if (!ok) { backendAccessToken = ""; localStorage.removeItem(API_TOKEN_KEY); }
-                else connectBackendRealtime();
+        async function restoreSupabaseSession() {
+            try {
+                const { data, error } = await ictSupabaseClient.auth.getSession();
+                if (error) throw error;
+                const authUser = data?.session?.user;
+                if (!authUser) return;
+                backendAccessToken = data.session.access_token;
+                await refreshStateFromBackend(false);
+                const meta = authUser.user_metadata || {};
+                const appMeta = authUser.app_metadata || {};
+                const role = String(appMeta.role || "").toLowerCase();
+                if (!["admin","teacher","student"].includes(role)) {
+                    await signOutSupabase();
+                    return;
+                }
+                const username = String(meta.username || appMeta.username || authUser.email || "").trim();
+                let found = (state.users || []).find(user =>
+                    String(user.role || "").toLowerCase() === role &&
+                    String(user.username || user.email || user.isn || "").trim().toLowerCase() === username.toLowerCase()
+                );
+                currentUser = {
+                    ...(found || {}),
+                    id: authUser.id,
+                    authUserId: authUser.id,
+                    role,
+                    username: role === "student" ? String(meta.isn || meta.username || username) : username,
+                    isn: String(meta.isn || ""),
+                    email: authUser.email,
+                    name: String(meta.name || found?.name || username),
+                    level: meta.level || found?.level || "",
+                    className: meta.className || found?.className || "",
+                    major: meta.major || found?.major || ""
+                };
+                if (role === "student") {
+                    currentUser.isn = currentUser.username;
+                    currentUser = syncStudentAccountFromMaster(currentUser);
+                }
+                showApp();
+                connectBackendRealtime();
+            } catch (error) {
+                console.warn("Supabase session restore failed:", error);
+                await signOutSupabase();
             }
-            restoreActiveSession();
-        })();
+        }
+        applyTheme();
+        restoreSupabaseSession();
 
 
     </script>
@@ -12613,5 +12717,5 @@ html, body { max-width:100%; overflow-x:hidden; }
 
 </body>
 
-</html>    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</html>
 
