@@ -1,0 +1,2 @@
+[functions.ict-sync-accounts]
+verify_jwt = false
